@@ -22,8 +22,10 @@ export const authenticate = (req: AuthRequest, _res: Response, next: NextFunctio
   } catch (error) {
     if (error instanceof AppError) {
       next(error);
+    } else if (error instanceof jwt.TokenExpiredError) {
+      next(new AppError('Token expired', 401));
     } else {
-      next(new AppError('Invalid or expired token', 401));
+      next(new AppError('Invalid token', 401));
     }
   }
 };
