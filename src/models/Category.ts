@@ -12,7 +12,6 @@ const categorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-categorySchema.index({ slug: 1 });
 categorySchema.index({ parentId: 1 });
 
 export type Category = InferSchemaType<typeof categorySchema>;

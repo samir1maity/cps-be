@@ -20,6 +20,10 @@ import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { config } from './config/env.js';
 
 const app: Application = express();
+const allowedOrigins = config.CORS_ORIGINS
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin, index, origins) => Boolean(origin) && origins.indexOf(origin) === index);
 
 // General rate limiter
 const generalLimiter = rateLimit({
@@ -29,7 +33,14 @@ const generalLimiter = rateLimit({
 });
 
 app.use(cors({
-  origin: config.FRONTEND_URL,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 app.use(generalLimiter);

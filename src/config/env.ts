@@ -11,6 +11,7 @@ export interface EnvConfig {
   JWT_EXPIRES_IN: string;
   JWT_REFRESH_EXPIRES_IN: string;
   FRONTEND_URL: string;
+  CORS_ORIGINS: string;
   // Razorpay
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
@@ -42,6 +43,7 @@ export const config: EnvConfig = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '15m',
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:3000',
   // Razorpay
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
