@@ -140,7 +140,6 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
           role: 'USER',
           phone: user.phone,
           avatar: user.avatar,
-          addresses: user.addresses,
         },
         accessToken,
         refreshToken,
@@ -205,7 +204,6 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
         role: 'USER',
         phone: doc.phone,
         avatar: doc.avatar,
-        addresses: doc.addresses,
       },
     });
   } catch (error) {

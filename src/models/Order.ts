@@ -8,18 +8,6 @@ const orderItemSchema = new mongoose.Schema({
   price: { type: Number, required: true, min: 0 },
 }, { _id: true });
 
-const shippingAddressSchema = new mongoose.Schema({
-  firstName: { type: String, required: true },
-  lastName: { type: String, required: true },
-  address1: { type: String, required: true },
-  address2: { type: String },
-  city: { type: String, required: true },
-  state: { type: String, required: true },
-  zipCode: { type: String, required: true },
-  country: { type: String, required: true },
-  phone: { type: String, required: true },
-}, { _id: false });
-
 const orderSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -34,7 +22,7 @@ const orderSchema = new mongoose.Schema(
     shipping: { type: Number, required: true, min: 0, default: 0 },
     discount: { type: Number, min: 0, default: 0 },
     total: { type: Number, required: true, min: 0 },
-    shippingAddress: { type: shippingAddressSchema, required: true },
+    shippingAddress: { type: mongoose.Schema.Types.ObjectId, ref: 'Address', required: true },
     paymentMethod: {
       type: String,
       enum: ['RAZORPAY', 'CASH_ON_DELIVERY'],

@@ -1,5 +1,6 @@
 import { type Response, type NextFunction } from 'express';
 import UserModel from '../models/User.js';
+import AddressModel from '../models/Address.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
@@ -11,11 +12,8 @@ export const avatarUpload = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files allowed'));
-    }
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files allowed'));
   },
 });
 
@@ -36,7 +34,6 @@ export const getProfile = async (req: AuthRequest, res: Response, next: NextFunc
         email: user.email,
         phone: user.phone,
         avatar: user.avatar,
-        addresses: user.addresses,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -89,12 +86,12 @@ export const changePassword = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
-// Addresses
+// ─── Addresses ────────────────────────────────────────────────────────────────
+
 export const getAddresses = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const user = await UserModel.findById(req.user!.sub).select('addresses');
-    if (!user) throw new AppError('User not found', 404);
-    res.json({ success: true, data: user.addresses });
+    const addresses = await AddressModel.find({ user: req.user!.sub }).sort({ isDefault: -1, createdAt: -1 });
+    res.json({ success: true, data: addresses });
   } catch (error) {
     next(error);
   }
@@ -102,24 +99,33 @@ export const getAddresses = async (req: AuthRequest, res: Response, next: NextFu
 
 export const addAddress = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { type, firstName, lastName, address1, address2, city, state, zipCode, country, phone, isDefault } = req.body;
+    const { label, firstName, lastName, address1, address2, city, state, zipCode, country, phone, isDefault } = req.body;
+
     const required = ['firstName', 'lastName', 'address1', 'city', 'state', 'zipCode', 'country', 'phone'];
     for (const field of required) {
       if (!req.body[field]) throw new AppError(`${field} is required`, 400);
     }
 
-    const user = await UserModel.findById(req.user!.sub);
-    if (!user) throw new AppError('User not found', 404);
-
     if (isDefault) {
-      // Remove existing default
-      user.addresses.forEach((a: any) => { a.isDefault = false; });
+      await AddressModel.updateMany({ user: req.user!.sub }, { isDefault: false });
     }
 
-    user.addresses.push({ type, firstName, lastName, address1, address2, city, state, zipCode, country, phone, isDefault: !!isDefault } as any);
-    await user.save();
+    const address = await AddressModel.create({
+      user: req.user!.sub,
+      label,
+      firstName,
+      lastName,
+      address1,
+      address2,
+      city,
+      state,
+      zipCode,
+      country,
+      phone,
+      isDefault: !!isDefault,
+    });
 
-    res.status(201).json({ success: true, data: user.addresses });
+    res.status(201).json({ success: true, data: address });
   } catch (error) {
     next(error);
   }
@@ -127,20 +133,20 @@ export const addAddress = async (req: AuthRequest, res: Response, next: NextFunc
 
 export const updateAddress = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const user = await UserModel.findById(req.user!.sub);
-    if (!user) throw new AppError('User not found', 404);
-
-    const address = user.addresses.find((a: any) => a._id.toString() === req.params.addressId);
+    const address = await AddressModel.findOne({ _id: req.params.addressId, user: req.user!.sub });
     if (!address) throw new AppError('Address not found', 404);
 
     if (req.body.isDefault) {
-      user.addresses.forEach((a: any) => { a.isDefault = false; });
+      await AddressModel.updateMany({ user: req.user!.sub }, { isDefault: false });
     }
 
-    Object.assign(address, req.body);
-    await user.save();
+    const allowed = ['label', 'firstName', 'lastName', 'address1', 'address2', 'city', 'state', 'zipCode', 'country', 'phone', 'isDefault'];
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) (address as any)[key] = req.body[key];
+    }
 
-    res.json({ success: true, data: user.addresses });
+    await address.save();
+    res.json({ success: true, data: address });
   } catch (error) {
     next(error);
   }
@@ -148,13 +154,9 @@ export const updateAddress = async (req: AuthRequest, res: Response, next: NextF
 
 export const deleteAddress = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const user = await UserModel.findById(req.user!.sub);
-    if (!user) throw new AppError('User not found', 404);
-
-    user.addresses = user.addresses.filter((a: any) => a._id.toString() !== req.params.addressId) as any;
-    await user.save();
-
-    res.json({ success: true, data: user.addresses });
+    const address = await AddressModel.findOneAndDelete({ _id: req.params.addressId, user: req.user!.sub });
+    if (!address) throw new AppError('Address not found', 404);
+    res.json({ success: true, message: 'Address deleted' });
   } catch (error) {
     next(error);
   }

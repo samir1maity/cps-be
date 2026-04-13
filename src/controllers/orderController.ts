@@ -1,5 +1,6 @@
 import { type Response, type NextFunction } from 'express';
 import OrderModel from '../models/Order.js';
+import AddressModel from '../models/Address.js';
 import CartModel from '../models/Cart.js';
 import ProductModel from '../models/Product.js';
 import CouponModel from '../models/Coupon.js';
@@ -16,25 +17,84 @@ import {
 import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
 
-const TAX_RATE = 0.18; // 18% GST
+const TAX_RATE = 0.18;
+
+/**
+ * Resolve shipping address for an order.
+ * If `addressId` is provided, reuse an existing saved address.
+ * Otherwise create a new Address doc from the raw address fields.
+ * Optionally save the new address to the user's saved addresses.
+ */
+async function resolveShippingAddress(
+  userId: string,
+  addressId?: string,
+  rawAddress?: Record<string, string>,
+  saveAddress?: boolean,
+): Promise<string> {
+  if (addressId) {
+    const existing = await AddressModel.findOne({ _id: addressId, user: userId });
+    if (!existing) throw new AppError('Saved address not found', 404);
+    return existing._id.toString();
+  }
+
+  if (!rawAddress) throw new AppError('Shipping address is required', 400);
+
+  const required = ['firstName', 'lastName', 'address1', 'city', 'state', 'zipCode', 'country', 'phone'];
+  for (const field of required) {
+    if (!rawAddress[field]) throw new AppError(`${field} is required in shipping address`, 400);
+  }
+
+  // If user wants to save this address, check for duplicates first
+  if (saveAddress) {
+    const duplicate = await AddressModel.findOne({
+      user: userId,
+      address1: rawAddress.address1,
+      city: rawAddress.city,
+      zipCode: rawAddress.zipCode,
+    });
+    if (duplicate) return duplicate._id.toString();
+  }
+
+  const addr = await AddressModel.create({
+    user: userId,
+    firstName: rawAddress.firstName,
+    lastName: rawAddress.lastName,
+    address1: rawAddress.address1,
+    address2: rawAddress.address2,
+    city: rawAddress.city,
+    state: rawAddress.state,
+    zipCode: rawAddress.zipCode,
+    country: rawAddress.country,
+    phone: rawAddress.phone,
+    // Only persist to user's saved list if they opted in
+    isDefault: false,
+  });
+
+  // If not saveAddress, we created a transient doc just for the order.
+  // It's still a real doc so it can be populated; it just won't appear in the
+  // user's address book unless they opted to save it.
+  return addr._id.toString();
+}
 
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { shippingAddress, paymentMethod = 'RAZORPAY', couponCode } = req.body;
+    const {
+      addressId,
+      shippingAddress,
+      saveAddress = false,
+      paymentMethod = 'RAZORPAY',
+      couponCode,
+    } = req.body;
 
-    if (!shippingAddress) throw new AppError('Shipping address is required', 400);
+    const userId = req.user!.sub;
 
-    // Validate required address fields
-    const requiredFields = ['firstName', 'lastName', 'address1', 'city', 'state', 'zipCode', 'country', 'phone'];
-    for (const field of requiredFields) {
-      if (!shippingAddress[field]) throw new AppError(`${field} is required in shipping address`, 400);
-    }
+    const resolvedAddressId = await resolveShippingAddress(userId, addressId, shippingAddress, saveAddress);
 
     // Get cart
-    const cart = await CartModel.findOne({ user: req.user!.sub }).populate('items.product');
+    const cart = await CartModel.findOne({ user: userId }).populate('items.product');
     if (!cart || cart.items.length === 0) throw new AppError('Cart is empty', 400);
 
-    // Validate stock and build order items
+    // Build order items and validate stock
     const orderItems: any[] = [];
     let subtotal = 0;
 
@@ -53,7 +113,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       subtotal += product.price * item.quantity;
     }
 
-    // Apply coupon if provided
+    // Apply coupon
     let discount = 0;
     let appliedCoupon: string | undefined;
     if (couponCode) {
@@ -70,13 +130,12 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     const tax = (subtotal - discount) * TAX_RATE;
-    const shipping = 0; // Free shipping
+    const shipping = 0;
     const total = subtotal - discount + tax + shipping;
 
     if (paymentMethod === 'CASH_ON_DELIVERY') {
-      // Create order directly
       const order = await OrderModel.create({
-        user: req.user!.sub,
+        user: userId,
         items: orderItems,
         status: 'CONFIRMED',
         subtotal,
@@ -84,47 +143,40 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
         shipping,
         discount,
         total,
-        shippingAddress,
+        shippingAddress: resolvedAddressId,
         paymentMethod: 'CASH_ON_DELIVERY',
         paymentStatus: 'PENDING',
         couponCode: appliedCoupon,
       });
 
-      // Deduct stock
       for (const item of cart.items as any[]) {
-        await ProductModel.findByIdAndUpdate(item.product._id, {
-          $inc: { stockQuantity: -item.quantity },
-        });
+        await ProductModel.findByIdAndUpdate(item.product._id, { $inc: { stockQuantity: -item.quantity } });
       }
+      await CartModel.findOneAndUpdate({ user: userId }, { items: [] });
 
-      // Clear cart
-      await CartModel.findOneAndUpdate({ user: req.user!.sub }, { items: [] });
-
-      // Notify
-      const user = await UserModel.findById(req.user!.sub);
+      const user = await UserModel.findById(userId);
       if (user) {
         await sendOrderConfirmationEmail(user.email, user.name, order._id.toString(), total);
-        await createNotification(req.user!.sub, 'ORDER', 'Order Confirmed', `Your order #${order._id} has been placed successfully.`, { orderId: order._id.toString() });
+        await createNotification(userId, 'ORDER', 'Order Confirmed', `Your order #${order._id} has been placed successfully.`, { orderId: order._id.toString() });
       }
 
-      logger.info('Order created (COD)', { orderId: order._id, userId: req.user!.sub });
-
-      res.status(201).json({ success: true, data: order });
+      logger.info('Order created (COD)', { orderId: order._id, userId });
+      const populated = await order.populate('shippingAddress');
+      res.status(201).json({ success: true, data: populated });
       return;
     }
 
-    // Razorpay order
+    // Razorpay
     const amountInPaise = Math.round(total * 100);
     const razorpayOrder = await createRazorpayOrder({
       amount: amountInPaise,
       currency: 'INR',
       receipt: `rcpt_${Date.now()}`,
-      notes: { userId: req.user!.sub },
+      notes: { userId },
     });
 
-    // Create a pending order
     const order = await OrderModel.create({
-      user: req.user!.sub,
+      user: userId,
       items: orderItems,
       status: 'PENDING',
       subtotal,
@@ -132,7 +184,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       shipping,
       discount,
       total,
-      shippingAddress,
+      shippingAddress: resolvedAddressId,
       paymentMethod: 'RAZORPAY',
       paymentStatus: 'PENDING',
       razorpayOrderId: razorpayOrder.id,
@@ -171,24 +223,17 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
     const order = await OrderModel.findOne({ _id: orderId, user: req.user!.sub });
     if (!order) throw new AppError('Order not found', 404);
 
-    // Update order
     order.paymentStatus = 'PAID';
     order.status = 'CONFIRMED';
     order.razorpayPaymentId = razorpayPaymentId;
     order.razorpaySignature = razorpaySignature;
     await order.save();
 
-    // Deduct stock
     for (const item of order.items) {
-      await ProductModel.findByIdAndUpdate(item.product, {
-        $inc: { stockQuantity: -item.quantity },
-      });
+      await ProductModel.findByIdAndUpdate(item.product, { $inc: { stockQuantity: -item.quantity } });
     }
-
-    // Clear cart
     await CartModel.findOneAndUpdate({ user: req.user!.sub }, { items: [] });
 
-    // Notify
     const user = await UserModel.findById(req.user!.sub);
     if (user) {
       await sendOrderConfirmationEmail(user.email, user.name, order._id.toString(), order.total);
@@ -197,7 +242,8 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
 
     logger.info('Payment verified', { orderId, razorpayPaymentId });
 
-    res.json({ success: true, data: order });
+    const populated = await order.populate('shippingAddress');
+    res.json({ success: true, data: populated });
   } catch (error) {
     next(error);
   }
@@ -211,6 +257,7 @@ export const getOrders = async (req: AuthRequest, res: Response, next: NextFunct
 
     const [orders, total] = await Promise.all([
       OrderModel.find({ user: req.user!.sub })
+        .populate('shippingAddress')
         .sort('-createdAt')
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum),
@@ -229,7 +276,7 @@ export const getOrders = async (req: AuthRequest, res: Response, next: NextFunct
 
 export const getOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const order = await OrderModel.findOne({ _id: req.params.id, user: req.user!.sub });
+    const order = await OrderModel.findOne({ _id: req.params.id, user: req.user!.sub }).populate('shippingAddress');
     if (!order) throw new AppError('Order not found', 404);
     res.json({ success: true, data: order });
   } catch (error) {
@@ -249,11 +296,8 @@ export const cancelOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.status = 'CANCELLED';
     await order.save();
 
-    // Restore stock
     for (const item of order.items) {
-      await ProductModel.findByIdAndUpdate(item.product, {
-        $inc: { stockQuantity: item.quantity },
-      });
+      await ProductModel.findByIdAndUpdate(item.product, { $inc: { stockQuantity: item.quantity } });
     }
 
     await createNotification(req.user!.sub, 'ORDER', 'Order Cancelled', `Your order #${order._id} has been cancelled.`, { orderId: order._id.toString() });
