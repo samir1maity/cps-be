@@ -18,6 +18,7 @@ import {
   deleteCategory,
   createCategoryRules,
   updateCategoryRules,
+  categoryImageUpload,
 } from '../controllers/adminCategoryController.js';
 import { authenticate, requireAdmin } from '../middlewares/authenticate.js';
 
@@ -40,10 +41,11 @@ router.patch('/users/:id/toggle-block', toggleUserBlock);
 router.get('/returns', getAdminReturnRequests);
 
 // Categories & Subcategories (full CRUD)
+// categoryImageUpload.single('image') must come before validation so req.file is populated.
 router.get('/categories', listCategories);
 router.get('/categories/:id', getCategory);
-router.post('/categories', createCategoryRules, createCategory);
-router.put('/categories/:id', updateCategoryRules, updateCategory);
+router.post('/categories', categoryImageUpload.single('image'), createCategoryRules, createCategory);
+router.put('/categories/:id', categoryImageUpload.single('image'), updateCategoryRules, updateCategory);
 router.delete('/categories/:id', deleteCategory);
 
 // Coupons

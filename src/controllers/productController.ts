@@ -2,32 +2,27 @@ import { type Request, type Response, type NextFunction } from 'express';
 import ProductModel from '../models/Product.js';
 import CategoryModel from '../models/Category.js';
 import { AppError } from '../middlewares/errorHandler.js';
-import multer from 'multer';
-import path from 'path';
-import { uploadToS3 } from '../services/s3Service.js';
+import { productImageUpload } from '../middlewares/upload.js';
+import { storage, resolveUrl, extractKey } from '../storage/index.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
 
-const storage = multer.memoryStorage();
-export const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'));
-    }
-  },
-});
+// Re-export so the router can reference it without a separate import.
+export { productImageUpload as upload };
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Build the API response shape for a product document.
+ * Keys stored in the DB are resolved to full URLs here — never before.
+ */
 const buildProductResponse = (p: any) => ({
   id: p._id,
   name: p.name,
   description: p.description,
   price: p.price,
   originalPrice: p.originalPrice,
-  images: p.images,
+  // Resolve each stored key to a public URL at response time.
+  images: (p.images as string[]).map(resolveUrl),
   category: p.category,
   subcategory: p.subcategory,
   brand: p.brand,
@@ -36,18 +31,49 @@ const buildProductResponse = (p: any) => ({
   rating: p.rating,
   reviewCount: p.reviewCount,
   tags: p.tags,
-  specifications: p.specifications instanceof Map
-    ? Object.fromEntries(p.specifications)
-    : p.specifications,
+  specifications:
+    p.specifications instanceof Map
+      ? Object.fromEntries(p.specifications)
+      : p.specifications,
   createdAt: p.createdAt,
   updatedAt: p.updatedAt,
 });
 
-export const getProducts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Upload every file in `req.files` to storage and return the resulting keys.
+ * The key pattern is: `products/{timestamp}-{sanitised-filename}`
+ */
+async function uploadProductImages(
+  files: Express.Multer.File[],
+): Promise<string[]> {
+  return Promise.all(
+    files.map(async (file) => {
+      const safeName = file.originalname.replace(/\s+/g, '_');
+      const key = `products/${Date.now()}-${safeName}`;
+      await storage.upload(key, file.buffer, file.mimetype);
+      return key; // store the key, not the URL
+    }),
+  );
+}
+
+// ── Route handlers ────────────────────────────────────────────────────────────
+
+export const getProducts = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
     const {
-      category, subcategory, search, minPrice, maxPrice,
-      inStock, page = '1', limit = '12', sort = '-createdAt',
+      category,
+      subcategory,
+      search,
+      minPrice,
+      maxPrice,
+      inStock,
+      page = '1',
+      limit = '12',
+      sort = '-createdAt',
     } = req.query as Record<string, string>;
 
     const filter: Record<string, any> = { isActive: true };
@@ -105,9 +131,16 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-export const getProduct = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getProduct = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
-    const product = await ProductModel.findOne({ _id: req.params.id, isActive: true })
+    const product = await ProductModel.findOne({
+      _id: req.params.id,
+      isActive: true,
+    })
       .populate('category', 'id name slug')
       .populate('subcategory', 'id name slug');
 
@@ -119,29 +152,40 @@ export const getProduct = async (req: Request, res: Response, next: NextFunction
   }
 };
 
-export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const createProduct = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
-    const { name, description, price, originalPrice, categoryId, subcategoryId, brand, stockQuantity, tags, specifications } = req.body;
+    const {
+      name,
+      description,
+      price,
+      originalPrice,
+      categoryId,
+      subcategoryId,
+      brand,
+      stockQuantity,
+      tags,
+      specifications,
+    } = req.body;
 
     const category = await CategoryModel.findById(categoryId);
     if (!category) throw new AppError('Category not found', 404);
 
-    const images: string[] = [];
-
-    if (req.files && Array.isArray(req.files)) {
-      for (const file of req.files as Express.Multer.File[]) {
-        const key = `products/${Date.now()}-${file.originalname.replace(/\s/g, '_')}`;
-        const url = await uploadToS3(file.buffer, key, file.mimetype);
-        images.push(url);
-      }
-    }
+    // Upload files → get back storage keys (not URLs)
+    const imageKeys =
+      req.files && Array.isArray(req.files)
+        ? await uploadProductImages(req.files as Express.Multer.File[])
+        : [];
 
     const product = await ProductModel.create({
       name,
       description,
       price: Number(price),
       originalPrice: originalPrice ? Number(originalPrice) : undefined,
-      images,
+      images: imageKeys, // ← keys stored in DB
       category: categoryId,
       subcategory: subcategoryId || null,
       brand: brand || 'Creative Pottery Studio',
@@ -162,25 +206,51 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-export const updateProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const updateProduct = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
     const product = await ProductModel.findById(req.params.id);
     if (!product) throw new AppError('Product not found', 404);
 
-    const { name, description, price, originalPrice, categoryId, subcategoryId, brand, stockQuantity, tags, specifications, isActive } = req.body;
+    const {
+      name,
+      description,
+      price,
+      originalPrice,
+      categoryId,
+      subcategoryId,
+      brand,
+      stockQuantity,
+      tags,
+      specifications,
+      isActive,
+      removeImages, // optional: JSON array of keys to remove
+    } = req.body;
 
-    const newImages: string[] = [...product.images];
-    if (req.files && Array.isArray(req.files)) {
-      for (const file of req.files as Express.Multer.File[]) {
-        const key = `products/${Date.now()}-${file.originalname.replace(/\s/g, '_')}`;
-        const url = await uploadToS3(file.buffer, key, file.mimetype);
-        newImages.push(url);
-      }
+    // Start from existing keys; remove any explicitly requested for deletion
+    let imageKeys: string[] = [...product.images];
+
+    if (removeImages) {
+      const toRemove: string[] = JSON.parse(removeImages);
+      // Delete from storage (best-effort, errors are swallowed inside provider)
+      await Promise.all(toRemove.map((k) => storage.delete(extractKey(k))));
+      imageKeys = imageKeys.filter((k) => !toRemove.includes(k));
+    }
+
+    // Append newly uploaded files
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      const newKeys = await uploadProductImages(
+        req.files as Express.Multer.File[],
+      );
+      imageKeys.push(...newKeys);
     }
 
     const updates: Record<string, any> = {};
-    if (name) updates.name = name;
-    if (description) updates.description = description;
+    if (name !== undefined) updates.name = name;
+    if (description !== undefined) updates.description = description;
     if (price !== undefined) updates.price = Number(price);
     if (originalPrice !== undefined) updates.originalPrice = Number(originalPrice);
     if (categoryId) updates.category = categoryId;
@@ -193,9 +263,13 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     if (tags) updates.tags = JSON.parse(tags);
     if (specifications) updates.specifications = JSON.parse(specifications);
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
-    if (newImages.length !== product.images.length) updates.images = newImages;
+    updates.images = imageKeys;
 
-    const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
+    const updated = await ProductModel.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true },
+    )
       .populate('category', 'id name slug')
       .populate('subcategory', 'id name slug');
 
@@ -205,9 +279,17 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const deleteProduct = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
   try {
-    const product = await ProductModel.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+    const product = await ProductModel.findByIdAndUpdate(
+      req.params.id,
+      { isActive: false },
+      { new: true },
+    );
     if (!product) throw new AppError('Product not found', 404);
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {

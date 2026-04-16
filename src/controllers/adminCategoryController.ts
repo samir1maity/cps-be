@@ -4,19 +4,25 @@ import CategoryModel from '../models/Category.js';
 import ProductModel from '../models/Product.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { validate } from '../middlewares/validate.js';
+import { categoryImageUpload } from '../middlewares/upload.js';
+import { storage, resolveUrl, extractKey } from '../storage/index.js';
+
+// Re-export so the router can reference it without a separate import.
+export { categoryImageUpload };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const slugify = (text: string): string =>
   text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-/** Shape used in every GET response. */
+/** Shape used in every GET response. The stored image key is resolved to a URL here. */
 const formatCategory = (cat: any, children: any[] = [], productCount = 0) => ({
   id: cat._id,
   name: cat.name,
   slug: cat.slug,
   description: cat.description ?? null,
-  image: cat.image ?? null,
+  // Resolve stored key → public URL at response time; null when no image set.
+  image: cat.image ? resolveUrl(cat.image) : null,
   parentId: cat.parentId ?? null,
   isActive: cat.isActive,
   productCount,
@@ -43,10 +49,11 @@ export const createCategoryRules = [
     .trim()
     .isLength({ max: 500 }).withMessage('Description must be at most 500 characters'),
 
+  // `image` is only validated when sent as a plain URL in the body.
+  // When uploading a file the field is ignored (the controller handles it).
   body('image')
-    .optional()
-    .trim()
-    .isURL().withMessage('Image must be a valid URL'),
+    .optional({ nullable: true })
+    .trim(),
 
   body('parentId')
     .optional({ nullable: true })
@@ -80,10 +87,7 @@ export const updateCategoryRules = [
 
   body('image')
     .optional({ nullable: true })
-    .custom((val) => {
-      if (!val) return true;
-      try { new URL(val); return true; } catch { throw new Error('Image must be a valid URL'); }
-    }),
+    .trim(),
 
   body('parentId')
     .optional({ nullable: true })
@@ -183,7 +187,7 @@ export const getCategory = async (req: Request, res: Response, next: NextFunctio
  */
 export const createCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { name, description, image, parentId } = req.body;
+    const { name, description, parentId } = req.body;
     let { slug } = req.body;
 
     // Auto-generate slug when not provided
@@ -197,15 +201,23 @@ export const createCategory = async (req: Request, res: Response, next: NextFunc
       throw new AppError(`Slug "${slug}" is already in use. Provide a unique slug.`, 409);
     }
 
+    // Resolve image: uploaded file takes priority over a URL string in the body.
+    let imageKey: string | undefined;
+    if ((req as any).file) {
+      const file: Express.Multer.File = (req as any).file;
+      const safeName = file.originalname.replace(/\s+/g, '_');
+      imageKey = `categories/${Date.now()}-${safeName}`;
+      await storage.upload(imageKey, file.buffer, file.mimetype);
+    }
+
     const category = await CategoryModel.create({
       name,
       slug,
       description: description || undefined,
-      image: image || undefined,
+      image: imageKey || undefined, // stored key — never a full URL
       parentId: parentId || null,
     });
 
-    // Populate parent for response
     const populated = await CategoryModel.findById(category._id).populate('parentId', 'id name slug');
 
     res.status(201).json({
@@ -243,7 +255,23 @@ export const updateCategory = async (req: Request, res: Response, next: NextFunc
     }
 
     if (description !== undefined) updates.description = description;
-    if (image !== undefined) updates.image = image;
+
+    // Image: uploaded file takes priority; fall back to JSON body value.
+    if ((req as any).file) {
+      const file: Express.Multer.File = (req as any).file;
+      // Delete the old image from storage before replacing
+      if (cat.image) {
+        await storage.delete(extractKey(cat.image));
+      }
+      const safeName = file.originalname.replace(/\s+/g, '_');
+      const imageKey = `categories/${Date.now()}-${safeName}`;
+      await storage.upload(imageKey, file.buffer, file.mimetype);
+      updates.image = imageKey; // stored key — never a full URL
+    } else if (image !== undefined) {
+      // Explicit null/empty clears the image; otherwise treat as an external URL (legacy support)
+      updates.image = image || undefined;
+    }
+
     if (isActive !== undefined) updates.isActive = isActive;
 
     // parentId: explicit null means "promote to top-level"
