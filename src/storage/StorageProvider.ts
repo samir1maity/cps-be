@@ -1,8 +1,11 @@
 /**
- * Abstraction over any object-storage backend.
+ * Provider-agnostic storage abstraction.
  *
- * Only file *keys* (relative paths) are ever stored in the database.
- * Full public URLs are constructed at read-time via `resolveUrl()`.
+ * The bucket / container is PRIVATE — no object is ever publicly readable.
+ * All access is mediated through short-lived pre-signed URLs generated here.
+ *
+ * Only file *keys* (relative paths) are stored in the database.
+ * URLs are generated on-demand and never persisted.
  *
  * To add a new provider (GCS, Azure Blob, …):
  *   1. Implement this interface.
@@ -11,22 +14,33 @@
  */
 export interface StorageProvider {
   /**
-   * Upload a file buffer and return the storage key (not a URL).
-   * @param key      Relative path inside the bucket / container (e.g. "products/abc.jpg")
-   * @param buffer   Raw file bytes
-   * @param mimeType MIME type of the file (e.g. "image/jpeg")
+   * Generate a pre-signed PUT URL the browser can use to upload a file
+   * directly to the storage provider — no AWS credentials reach the client.
+   *
+   * @param key        Storage key (e.g. "products/1234-mug.jpg")
+   * @param mimeType   Content-Type the client must set on the PUT request
+   * @param expiresIn  Seconds until the URL expires (default: provider default)
+   * @returns          { uploadUrl, key }
    */
-  upload(key: string, buffer: Buffer, mimeType: string): Promise<void>;
+  getSignedUploadUrl(
+    key: string,
+    mimeType: string,
+    expiresIn?: number,
+  ): Promise<string>;
+
+  /**
+   * Generate a pre-signed GET URL that grants temporary read access to a
+   * private object.  Never expose the raw key to the browser — always
+   * return a signed URL so the bucket stays private.
+   *
+   * @param key       Storage key stored in the DB
+   * @param expiresIn Seconds until the URL expires
+   */
+  getSignedDownloadUrl(key: string, expiresIn?: number): Promise<string>;
 
   /**
    * Permanently delete the object at `key`.
-   * Should not throw when the object does not exist.
+   * Must not throw when the object does not exist (idempotent).
    */
   delete(key: string): Promise<void>;
-
-  /**
-   * Build the public-facing URL for `key`.
-   * The base URL is provider-specific (e.g. S3 bucket URL, CDN origin).
-   */
-  resolveUrl(key: string): string;
 }

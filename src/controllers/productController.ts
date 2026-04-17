@@ -2,18 +2,15 @@ import { type Request, type Response, type NextFunction } from 'express';
 import ProductModel from '../models/Product.js';
 import CategoryModel from '../models/Category.js';
 import { AppError } from '../middlewares/errorHandler.js';
-import { productImageUpload } from '../middlewares/upload.js';
-import { storage, resolveUrl, extractKey } from '../storage/index.js';
+import { storage } from '../storage/index.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
-
-// Re-export so the router can reference it without a separate import.
-export { productImageUpload as upload };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
  * Build the API response shape for a product document.
- * Keys stored in the DB are resolved to full URLs here — never before.
+ * Image keys stored in the DB are returned as-is.
+ * The frontend calls GET /api/v1/upload/sign/:key to get a signed URL.
  */
 const buildProductResponse = (p: any) => ({
   id: p._id,
@@ -21,8 +18,7 @@ const buildProductResponse = (p: any) => ({
   description: p.description,
   price: p.price,
   originalPrice: p.originalPrice,
-  // Resolve each stored key to a public URL at response time.
-  images: (p.images as string[]).map(resolveUrl),
+  images: p.images as string[], // stored keys — frontend resolves to signed URLs
   category: p.category,
   subcategory: p.subcategory,
   brand: p.brand,
@@ -38,23 +34,6 @@ const buildProductResponse = (p: any) => ({
   createdAt: p.createdAt,
   updatedAt: p.updatedAt,
 });
-
-/**
- * Upload every file in `req.files` to storage and return the resulting keys.
- * The key pattern is: `products/{timestamp}-{sanitised-filename}`
- */
-async function uploadProductImages(
-  files: Express.Multer.File[],
-): Promise<string[]> {
-  return Promise.all(
-    files.map(async (file) => {
-      const safeName = file.originalname.replace(/\s+/g, '_');
-      const key = `products/${Date.now()}-${safeName}`;
-      await storage.upload(key, file.buffer, file.mimetype);
-      return key; // store the key, not the URL
-    }),
-  );
-}
 
 // ── Route handlers ────────────────────────────────────────────────────────────
 
@@ -82,25 +61,17 @@ export const getProducts = async (
       const cat = await CategoryModel.findOne({ slug: category });
       if (cat) filter.category = cat._id;
     }
-
     if (subcategory) {
       const sub = await CategoryModel.findOne({ slug: subcategory });
       if (sub) filter.subcategory = sub._id;
     }
-
-    if (search) {
-      filter.$text = { $search: search };
-    }
-
+    if (search) filter.$text = { $search: search };
     if (minPrice || maxPrice) {
       filter.price = {};
       if (minPrice) filter.price.$gte = Number(minPrice);
       if (maxPrice) filter.price.$lte = Number(maxPrice);
     }
-
-    if (inStock !== undefined) {
-      filter.inStock = inStock === 'true';
-    }
+    if (inStock !== undefined) filter.inStock = inStock === 'true';
 
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, parseInt(limit));
@@ -145,7 +116,6 @@ export const getProduct = async (
       .populate('subcategory', 'id name slug');
 
     if (!product) throw new AppError('Product not found', 404);
-
     res.json({ success: true, data: buildProductResponse(product) });
   } catch (error) {
     next(error);
@@ -169,23 +139,29 @@ export const createProduct = async (
       stockQuantity,
       tags,
       specifications,
+      imageKeys, // JSON array of storage keys sent by the frontend after direct S3 upload
     } = req.body;
 
     const category = await CategoryModel.findById(categoryId);
     if (!category) throw new AppError('Category not found', 404);
 
-    // Upload files → get back storage keys (not URLs)
-    const imageKeys =
-      req.files && Array.isArray(req.files)
-        ? await uploadProductImages(req.files as Express.Multer.File[])
-        : [];
+    // Parse imageKeys — frontend sends a JSON-encoded array of storage keys.
+    let images: string[] = [];
+    if (imageKeys) {
+      try {
+        images = JSON.parse(imageKeys);
+        if (!Array.isArray(images)) images = [];
+      } catch {
+        images = [];
+      }
+    }
 
     const product = await ProductModel.create({
       name,
       description,
       price: Number(price),
       originalPrice: originalPrice ? Number(originalPrice) : undefined,
-      images: imageKeys, // ← keys stored in DB
+      images, // storage keys, never full URLs
       category: categoryId,
       subcategory: subcategoryId || null,
       brand: brand || 'Creative Pottery Studio',
@@ -227,28 +203,26 @@ export const updateProduct = async (
       tags,
       specifications,
       isActive,
-      removeImages, // optional: JSON array of keys to remove
+      imageKeys,    // JSON array of NEW keys to append
+      removeImages, // JSON array of keys to remove
     } = req.body;
 
-    // Start from existing keys; remove any explicitly requested for deletion
-    let imageKeys: string[] = [...product.images];
+    let imageKeyList: string[] = [...product.images];
 
+    // Remove explicitly deleted keys from storage and the list.
     if (removeImages) {
       const toRemove: string[] = JSON.parse(removeImages);
-      // Delete from storage (best-effort, errors are swallowed inside provider)
-      await Promise.all(toRemove.map((k) => storage.delete(extractKey(k))));
-      imageKeys = imageKeys.filter((k) => !toRemove.includes(k));
+      await Promise.all(toRemove.map((k) => storage.delete(k)));
+      imageKeyList = imageKeyList.filter((k) => !toRemove.includes(k));
     }
 
-    // Append newly uploaded files
-    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-      const newKeys = await uploadProductImages(
-        req.files as Express.Multer.File[],
-      );
-      imageKeys.push(...newKeys);
+    // Append newly uploaded keys.
+    if (imageKeys) {
+      const newKeys: string[] = JSON.parse(imageKeys);
+      imageKeyList.push(...newKeys);
     }
 
-    const updates: Record<string, any> = {};
+    const updates: Record<string, any> = { images: imageKeyList };
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
     if (price !== undefined) updates.price = Number(price);
@@ -263,13 +237,8 @@ export const updateProduct = async (
     if (tags) updates.tags = JSON.parse(tags);
     if (specifications) updates.specifications = JSON.parse(specifications);
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
-    updates.images = imageKeys;
 
-    const updated = await ProductModel.findByIdAndUpdate(
-      req.params.id,
-      updates,
-      { new: true },
-    )
+    const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
       .populate('category', 'id name slug')
       .populate('subcategory', 'id name slug');
 
@@ -288,9 +257,17 @@ export const deleteProduct = async (
     const product = await ProductModel.findByIdAndUpdate(
       req.params.id,
       { isActive: false },
-      { new: true },
+      { new: false }, // return the doc before update to read its image keys
     );
     if (!product) throw new AppError('Product not found', 404);
+
+    // Delete all stored images from S3 (fire-and-forget — don't block the response).
+    if (Array.isArray(product.images) && product.images.length > 0) {
+      Promise.all(product.images.map((key: string) => storage.delete(key))).catch(
+        (err) => console.error('[deleteProduct] S3 cleanup error:', err),
+      );
+    }
+
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     next(error);

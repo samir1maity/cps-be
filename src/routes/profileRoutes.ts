@@ -7,7 +7,6 @@ import {
   addAddress,
   updateAddress,
   deleteAddress,
-  avatarUpload,
 } from '../controllers/profileController.js';
 import { authenticate } from '../middlewares/authenticate.js';
 
@@ -15,7 +14,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', getProfile);
-router.put('/', avatarUpload.single('avatar'), updateProfile);
+router.put('/', updateProfile);           // accepts { name, phone, avatarKey }
 router.patch('/change-password', changePassword);
 router.get('/addresses', getAddresses);
 router.post('/addresses', addAddress);

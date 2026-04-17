@@ -17,7 +17,7 @@ export interface EnvConfig {
   RAZORPAY_KEY_SECRET: string;
   // Storage (provider-agnostic)
   STORAGE_PROVIDER: string;   // 's3' | future: 'gcs' | 'azure'
-  STORAGE_BASE_URL: string;   // CDN/custom URL prefix; defaults to provider canonical URL when empty
+  PRESIGN_EXPIRES_IN: number; // seconds — lifetime of signed upload/download URLs
   // AWS S3
   AWS_REGION: string;
   AWS_ACCESS_KEY_ID: string;
@@ -52,7 +52,7 @@ export const config: EnvConfig = {
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
   // Storage
   STORAGE_PROVIDER: process.env.STORAGE_PROVIDER || 's3',
-  STORAGE_BASE_URL: process.env.STORAGE_BASE_URL || '',
+  PRESIGN_EXPIRES_IN: Number(process.env.PRESIGN_EXPIRES_IN || 900), // 15 min default
   // AWS S3
   AWS_REGION: process.env.AWS_REGION || 'ap-south-1',
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',

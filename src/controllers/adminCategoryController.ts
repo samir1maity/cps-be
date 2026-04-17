@@ -4,25 +4,24 @@ import CategoryModel from '../models/Category.js';
 import ProductModel from '../models/Product.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { validate } from '../middlewares/validate.js';
-import { categoryImageUpload } from '../middlewares/upload.js';
-import { storage, resolveUrl, extractKey } from '../storage/index.js';
+import { storage } from '../storage/index.js';
 
-// Re-export so the router can reference it without a separate import.
-export { categoryImageUpload };
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const slugify = (text: string): string =>
   text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-/** Shape used in every GET response. The stored image key is resolved to a URL here. */
+/**
+ * Shape used in every GET response.
+ * The stored image key is returned as-is; the frontend resolves it to a
+ * signed URL via GET /api/v1/upload/sign/:key.
+ */
 const formatCategory = (cat: any, children: any[] = [], productCount = 0) => ({
   id: cat._id,
   name: cat.name,
   slug: cat.slug,
   description: cat.description ?? null,
-  // Resolve stored key → public URL at response time; null when no image set.
-  image: cat.image ? resolveUrl(cat.image) : null,
+  image: cat.image ?? null, // storage key — never a full URL
   parentId: cat.parentId ?? null,
   isActive: cat.isActive,
   productCount,
@@ -49,11 +48,8 @@ export const createCategoryRules = [
     .trim()
     .isLength({ max: 500 }).withMessage('Description must be at most 500 characters'),
 
-  // `image` is only validated when sent as a plain URL in the body.
-  // When uploading a file the field is ignored (the controller handles it).
-  body('image')
-    .optional({ nullable: true })
-    .trim(),
+  // imageKey is a storage key produced by POST /upload/presign → direct S3 PUT.
+  body('imageKey').optional({ nullable: true }).trim(),
 
   body('parentId')
     .optional({ nullable: true })
@@ -85,15 +81,12 @@ export const updateCategoryRules = [
     .trim()
     .isLength({ max: 500 }).withMessage('Description must be at most 500 characters'),
 
-  body('image')
-    .optional({ nullable: true })
-    .trim(),
+  body('imageKey').optional({ nullable: true }).trim(),
 
   body('parentId')
     .optional({ nullable: true })
     .custom(async (val, { req }) => {
       if (!val) return true;
-      // Cannot make a category its own parent
       if (val === req.params?.id) throw new Error('A category cannot be its own parent');
       const parent = await CategoryModel.findById(val);
       if (!parent) throw new Error('Parent category not found');
@@ -110,11 +103,6 @@ export const updateCategoryRules = [
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-/**
- * GET /admin/categories
- * Returns all top-level categories with their subcategories and product counts.
- * Accepts ?includeInactive=true to also return inactive entries.
- */
 export const listCategories = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const showInactive = req.query.includeInactive === 'true';
@@ -136,11 +124,11 @@ export const listCategories = async (req: Request, res: Response, next: NextFunc
               isActive: true,
             });
             return formatCategory(child, [], childProductCount);
-          })
+          }),
         );
 
         return formatCategory(cat, formattedChildren, productCount);
-      })
+      }),
     );
 
     res.json({ success: true, data: result });
@@ -149,10 +137,6 @@ export const listCategories = async (req: Request, res: Response, next: NextFunc
   }
 };
 
-/**
- * GET /admin/categories/:id
- * Returns a single category (top-level or sub) with its children and product count.
- */
 export const getCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const cat = await CategoryModel.findById(req.params.id);
@@ -170,7 +154,7 @@ export const getCategory = async (req: Request, res: Response, next: NextFunctio
           isActive: true,
         });
         return formatCategory(child, [], childCount);
-      })
+      }),
     );
 
     res.json({ success: true, data: formatCategory(cat, formattedChildren, productCount) });
@@ -179,42 +163,21 @@ export const getCategory = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-/**
- * POST /admin/categories
- * Creates a category or subcategory.
- * If parentId is provided the new entry is treated as a subcategory.
- * Slug is auto-generated from name when not supplied.
- */
 export const createCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { name, description, parentId } = req.body;
+    const { name, description, imageKey, parentId } = req.body;
     let { slug } = req.body;
 
-    // Auto-generate slug when not provided
-    if (!slug) {
-      slug = slugify(name);
-    }
+    if (!slug) slug = slugify(name);
 
-    // Ensure slug is unique
     const existing = await CategoryModel.findOne({ slug });
-    if (existing) {
-      throw new AppError(`Slug "${slug}" is already in use. Provide a unique slug.`, 409);
-    }
-
-    // Resolve image: uploaded file takes priority over a URL string in the body.
-    let imageKey: string | undefined;
-    if ((req as any).file) {
-      const file: Express.Multer.File = (req as any).file;
-      const safeName = file.originalname.replace(/\s+/g, '_');
-      imageKey = `categories/${Date.now()}-${safeName}`;
-      await storage.upload(imageKey, file.buffer, file.mimetype);
-    }
+    if (existing) throw new AppError(`Slug "${slug}" is already in use. Provide a unique slug.`, 409);
 
     const category = await CategoryModel.create({
       name,
       slug,
       description: description || undefined,
-      image: imageKey || undefined, // stored key — never a full URL
+      image: imageKey || undefined, // storage key, never a URL
       parentId: parentId || null,
     });
 
@@ -230,84 +193,55 @@ export const createCategory = async (req: Request, res: Response, next: NextFunc
   }
 };
 
-/**
- * PUT /admin/categories/:id
- * Updates a category or subcategory.
- * Changing parentId moves it to a different parent (or promotes to top-level when null).
- */
 export const updateCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const cat = await CategoryModel.findById(req.params.id);
     if (!cat) throw new AppError('Category not found', 404);
 
-    const { name, slug, description, image, parentId, isActive } = req.body;
+    const { name, slug, description, imageKey, parentId, isActive } = req.body;
     const updates: Record<string, any> = {};
 
     if (name !== undefined) updates.name = name;
 
-    if (slug !== undefined) {
-      // Only check uniqueness if the slug is actually changing
-      if (slug !== cat.slug) {
-        const conflict = await CategoryModel.findOne({ slug, _id: { $ne: cat._id } });
-        if (conflict) throw new AppError(`Slug "${slug}" is already in use.`, 409);
-        updates.slug = slug;
-      }
+    if (slug !== undefined && slug !== cat.slug) {
+      const conflict = await CategoryModel.findOne({ slug, _id: { $ne: cat._id } });
+      if (conflict) throw new AppError(`Slug "${slug}" is already in use.`, 409);
+      updates.slug = slug;
     }
 
     if (description !== undefined) updates.description = description;
 
-    // Image: uploaded file takes priority; fall back to JSON body value.
-    if ((req as any).file) {
-      const file: Express.Multer.File = (req as any).file;
-      // Delete the old image from storage before replacing
-      if (cat.image) {
-        await storage.delete(extractKey(cat.image));
-      }
-      const safeName = file.originalname.replace(/\s+/g, '_');
-      const imageKey = `categories/${Date.now()}-${safeName}`;
-      await storage.upload(imageKey, file.buffer, file.mimetype);
-      updates.image = imageKey; // stored key — never a full URL
-    } else if (image !== undefined) {
-      // Explicit null/empty clears the image; otherwise treat as an external URL (legacy support)
-      updates.image = image || undefined;
+    if (imageKey !== undefined) {
+      // Delete old image from storage before replacing.
+      if (cat.image) await storage.delete(cat.image);
+      updates.image = imageKey || undefined; // null/empty clears the image
     }
 
     if (isActive !== undefined) updates.isActive = isActive;
 
-    // parentId: explicit null means "promote to top-level"
-    if ('parentId' in req.body) {
-      updates.parentId = parentId ?? null;
-    }
+    if ('parentId' in req.body) updates.parentId = parentId ?? null;
 
-    // Guard: cannot set a category that has children to have a parentId
-    // (would create grandchildren which exceed our max depth of 1)
     if (updates.parentId) {
       const hasChildren = await CategoryModel.exists({ parentId: cat._id });
       if (hasChildren) {
         throw new AppError(
-          'Cannot turn a category into a subcategory when it already has subcategories. Remove its subcategories first.',
-          400
+          'Cannot turn a category into a subcategory when it already has subcategories.',
+          400,
         );
       }
     }
 
-    const updated = await CategoryModel.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-
-    res.json({
-      success: true,
-      message: 'Category updated successfully',
-      data: formatCategory(updated!),
+    const updated = await CategoryModel.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true,
     });
+
+    res.json({ success: true, message: 'Category updated successfully', data: formatCategory(updated!) });
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * DELETE /admin/categories/:id
- * Soft-deletes (sets isActive = false) by default.
- * Pass ?hard=true for a permanent deletion (only allowed when no active products reference it).
- */
 export const deleteCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const cat = await CategoryModel.findById(req.params.id);
@@ -315,7 +249,6 @@ export const deleteCategory = async (req: Request, res: Response, next: NextFunc
 
     const hardDelete = req.query.hard === 'true';
 
-    // Check for referencing products
     const productCount = await ProductModel.countDocuments({
       $or: [{ category: cat._id }, { subcategory: cat._id }],
       isActive: true,
@@ -324,21 +257,17 @@ export const deleteCategory = async (req: Request, res: Response, next: NextFunc
     if (productCount > 0) {
       throw new AppError(
         `Cannot delete: ${productCount} active product(s) reference this category. Reassign or deactivate them first.`,
-        409
+        409,
       );
     }
 
     if (hardDelete) {
-      // Also hard-delete any subcategories (only safe because products check passed)
       await CategoryModel.deleteMany({ parentId: cat._id });
       await CategoryModel.findByIdAndDelete(cat._id);
-
       res.json({ success: true, message: 'Category permanently deleted' });
     } else {
-      // Soft-delete: deactivate this category and all its subcategories
       await CategoryModel.updateMany({ parentId: cat._id }, { isActive: false });
       await CategoryModel.findByIdAndUpdate(cat._id, { isActive: false });
-
       res.json({ success: true, message: 'Category deactivated successfully' });
     }
   } catch (error) {

@@ -15,6 +15,7 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import returnRoutes from './routes/returnRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
 
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { config } from './config/env.js';
@@ -65,6 +66,7 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/returns', returnRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 
 // Legacy auth route (for backward compatibility with existing frontend)
 app.use('/api/auth', authRoutes);

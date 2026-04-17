@@ -4,11 +4,7 @@ import AddressModel from '../models/Address.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
-import { storage, resolveUrl, extractKey } from '../storage/index.js';
-import { avatarUpload } from '../middlewares/upload.js';
-
-// Re-export so the router can reference it without a separate import.
-export { avatarUpload };
+import { storage } from '../storage/index.js';
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 
@@ -33,8 +29,8 @@ export const getProfile = async (
         name: user.name,
         email: user.email,
         phone: user.phone,
-        // Resolve stored key → public URL at response time
-        avatar: resolveUrl(user.avatar) || null,
+        // Return the raw key — frontend calls GET /upload/sign/:key to display it.
+        avatar: user.avatar ?? null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -50,25 +46,20 @@ export const updateProfile = async (
   next: NextFunction,
 ): Promise<void> => {
   try {
-    const { name, phone } = req.body;
+    const { name, phone, avatarKey } = req.body;
     const updates: Record<string, any> = {};
 
     if (name) updates.name = name.trim();
     if (phone) updates.phone = phone.trim();
 
-    if (req.file) {
-      const userId = req.user!.sub;
-
-      // Delete the old avatar from storage if one exists
-      const existing = await UserModel.findById(userId).select('avatar');
+    if (avatarKey) {
+      // Delete the old avatar from storage before swapping.
+      const existing = await UserModel.findById(req.user!.sub).select('avatar');
       if (existing?.avatar) {
-        await storage.delete(extractKey(existing.avatar));
+        await storage.delete(existing.avatar);
       }
-
-      // Upload new avatar; store only the key
-      const key = `avatars/${userId}-${Date.now()}`;
-      await storage.upload(key, req.file.buffer, req.file.mimetype);
-      updates.avatar = key; // ← key stored in DB
+      // Store only the key — never the signed URL (it expires).
+      updates.avatar = avatarKey;
     }
 
     const user = await UserModel.findByIdAndUpdate(req.user!.sub, updates, {
@@ -83,7 +74,7 @@ export const updateProfile = async (
         name: user.name,
         email: user.email,
         phone: user.phone,
-        avatar: resolveUrl(user.avatar) || null,
+        avatar: user.avatar ?? null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -145,29 +136,11 @@ export const addAddress = async (
 ): Promise<void> => {
   try {
     const {
-      label,
-      firstName,
-      lastName,
-      address1,
-      address2,
-      city,
-      state,
-      zipCode,
-      country,
-      phone,
-      isDefault,
+      label, firstName, lastName, address1, address2,
+      city, state, zipCode, country, phone, isDefault,
     } = req.body;
 
-    const required = [
-      'firstName',
-      'lastName',
-      'address1',
-      'city',
-      'state',
-      'zipCode',
-      'country',
-      'phone',
-    ];
+    const required = ['firstName', 'lastName', 'address1', 'city', 'state', 'zipCode', 'country', 'phone'];
     for (const field of required) {
       if (!req.body[field]) throw new AppError(`${field} is required`, 400);
     }
@@ -178,17 +151,8 @@ export const addAddress = async (
 
     const address = await AddressModel.create({
       user: req.user!.sub,
-      label,
-      firstName,
-      lastName,
-      address1,
-      address2,
-      city,
-      state,
-      zipCode,
-      country,
-      phone,
-      isDefault: !!isDefault,
+      label, firstName, lastName, address1, address2,
+      city, state, zipCode, country, phone, isDefault: !!isDefault,
     });
 
     res.status(201).json({ success: true, data: address });
@@ -214,17 +178,8 @@ export const updateAddress = async (
     }
 
     const allowed = [
-      'label',
-      'firstName',
-      'lastName',
-      'address1',
-      'address2',
-      'city',
-      'state',
-      'zipCode',
-      'country',
-      'phone',
-      'isDefault',
+      'label', 'firstName', 'lastName', 'address1', 'address2',
+      'city', 'state', 'zipCode', 'country', 'phone', 'isDefault',
     ];
     for (const key of allowed) {
       if (req.body[key] !== undefined) (address as any)[key] = req.body[key];

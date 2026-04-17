@@ -1,13 +1,16 @@
 /**
  * Storage factory.
  *
- * Reads STORAGE_PROVIDER from env and returns a singleton StorageProvider.
- * Business logic only ever imports from this file — never from a specific
+ * Returns a singleton StorageProvider chosen by the STORAGE_PROVIDER env var.
+ * All business logic imports from this file only — never from a specific
  * provider module — so swapping backends requires only an env-var change.
  *
- * Supported values:
- *   s3   → Amazon S3  (default)
- *   (add more cases below when new providers are implemented)
+ * Supported values of STORAGE_PROVIDER:
+ *   s3   → Amazon S3 (private bucket, pre-signed URLs)  [default]
+ *   (add further cases below when new providers are implemented)
+ *
+ * The bucket is PRIVATE.  Objects are never publicly readable.
+ * All access goes through short-lived pre-signed URLs issued by the backend.
  */
 import { config } from '../config/env.js';
 import { S3StorageProvider } from './S3StorageProvider.js';
@@ -23,35 +26,3 @@ function createProvider(): StorageProvider {
 
 /** Singleton storage provider — shared across the whole process. */
 export const storage: StorageProvider = createProvider();
-
-/**
- * Resolve a stored key to a full public URL.
- *
- * Usage:
- *   // In DB: product.images = ['products/abc.jpg']
- *   resolveUrl('products/abc.jpg')
- *   // → 'https://my-bucket.s3.ap-south-1.amazonaws.com/products/abc.jpg'
- *
- * Returns an empty string for falsy keys so callers can do:
- *   image: resolveUrl(product.imageKey) || null
- */
-export const resolveUrl = (key: string | null | undefined): string =>
-  key ? storage.resolveUrl(key) : '';
-
-/**
- * Extract the storage key from a previously-resolved full URL.
- * Used when migrating old records that still store full URLs.
- *
- * e.g. 'https://bucket.s3.region.amazonaws.com/products/abc.jpg'
- *      → 'products/abc.jpg'
- */
-export const extractKey = (urlOrKey: string): string => {
-  try {
-    const parsed = new URL(urlOrKey);
-    // pathname starts with '/', drop it
-    return parsed.pathname.replace(/^\//, '');
-  } catch {
-    // Not a URL — it's already a plain key
-    return urlOrKey;
-  }
-};
