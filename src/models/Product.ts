@@ -15,6 +15,7 @@ const productSchema = new mongoose.Schema(
     tags: [{ type: String, trim: true }],
     specifications: { type: Map, of: String, default: {} },
     isActive: { type: Boolean, default: true },
+    isFeatured: { type: Boolean, default: false },
     // Aggregated from reviews
     rating: { type: Number, default: 0, min: 0, max: 5 },
     reviewCount: { type: Number, default: 0, min: 0 },

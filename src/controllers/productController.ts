@@ -31,6 +31,7 @@ const buildProductResponse = (p: any) => ({
     p.specifications instanceof Map
       ? Object.fromEntries(p.specifications)
       : p.specifications,
+  isFeatured: p.isFeatured ?? false,
   createdAt: p.createdAt,
   updatedAt: p.updatedAt,
 });
@@ -50,12 +51,14 @@ export const getProducts = async (
       minPrice,
       maxPrice,
       inStock,
+      featured,
       page = '1',
       limit = '12',
       sort = '-createdAt',
     } = req.query as Record<string, string>;
 
     const filter: Record<string, any> = { isActive: true };
+    if (featured === 'true') filter.isFeatured = true;
 
     if (category) {
       const cat = await CategoryModel.findOne({ slug: category });
@@ -169,6 +172,7 @@ export const createProduct = async (
       inStock: Number(stockQuantity) > 0,
       tags: tags ? JSON.parse(tags) : [],
       specifications: specifications ? JSON.parse(specifications) : {},
+      isFeatured: req.body.isFeatured === 'true' || req.body.isFeatured === true,
     });
 
     const populated = await product.populate([
@@ -237,6 +241,8 @@ export const updateProduct = async (
     if (tags) updates.tags = JSON.parse(tags);
     if (specifications) updates.specifications = JSON.parse(specifications);
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
+    if (req.body.isFeatured !== undefined)
+      updates.isFeatured = req.body.isFeatured === 'true' || req.body.isFeatured === true;
 
     const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
       .populate('category', 'id name slug')
