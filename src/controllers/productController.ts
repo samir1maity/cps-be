@@ -207,8 +207,9 @@ export const updateProduct = async (
       tags,
       specifications,
       isActive,
-      imageKeys,    // JSON array of NEW keys to append
-      removeImages, // JSON array of keys to remove
+      imageKeys,        // JSON array of NEW keys to append
+      removeImages,     // JSON array of keys to remove
+      orderedImageKeys, // JSON array — full ordered list (primary first), overrides append logic
     } = req.body;
 
     let imageKeyList: string[] = [...product.images];
@@ -224,6 +225,11 @@ export const updateProduct = async (
     if (imageKeys) {
       const newKeys: string[] = JSON.parse(imageKeys);
       imageKeyList.push(...newKeys);
+    }
+
+    // If frontend sent the full ordered list (primary first), use it directly.
+    if (orderedImageKeys) {
+      imageKeyList = JSON.parse(orderedImageKeys);
     }
 
     const updates: Record<string, any> = { images: imageKeyList };
