@@ -92,3 +92,22 @@ export const sendRefundUpdateEmail = async (
   `;
   await sendEmail(email, subject, html);
 };
+
+export const sendPasswordResetOtpEmail = async (
+  email: string,
+  name: string,
+  otp: string,
+  expiresInMinutes: number
+): Promise<void> => {
+  const subject = 'Password Reset OTP';
+  const html = `
+    <h2>Hello ${name},</h2>
+    <p>Use the following one-time password to reset your account password:</p>
+    <p style="font-size: 28px; font-weight: 700; letter-spacing: 6px;">${otp}</p>
+    <p>This OTP will expire in <strong>${expiresInMinutes} minutes</strong>.</p>
+    <p>If you did not request a password reset, you can ignore this email.</p>
+    <br/>
+    <p>Creative Pottery Studio Team</p>
+  `;
+  await sendEmail(email, subject, html);
+};

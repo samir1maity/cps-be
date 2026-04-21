@@ -8,6 +8,10 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true },
     avatar: { type: String },
     isBlocked: { type: Boolean, default: false },
+    passwordResetOtpHash: { type: String },
+    passwordResetOtpExpiresAt: { type: Date },
+    passwordResetLastSentAt: { type: Date },
+    passwordResetAttemptCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
