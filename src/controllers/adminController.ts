@@ -5,6 +5,7 @@ import ProductModel from '../models/Product.js';
 import CategoryModel from '../models/Category.js';
 import ReturnRequestModel from '../models/ReturnRequest.js';
 import CouponModel from '../models/Coupon.js';
+import PaymentAuditLogModel from '../models/PaymentAuditLog.js';
 import { AppError } from '../middlewares/errorHandler.js';
 // Category CRUD is handled by adminCategoryController
 import type { AuthRequest } from '../middlewares/authenticate.js';
@@ -12,6 +13,7 @@ import {
   createNotification,
   sendShippingUpdateEmail,
 } from '../services/notificationService.js';
+import { recordAuditLog } from '../services/paymentAuditService.js';
 import logger from '../utils/logger.js';
 
 // Dashboard Analytics
@@ -112,8 +114,70 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       { orderId: order._id.toString() }
     );
 
+    await recordAuditLog({
+      scope: 'ORDER',
+      event: 'ORDER_STATUS_UPDATED',
+      message: 'Order status updated by admin',
+      orderId: order._id.toString(),
+      userId: user._id.toString(),
+      paymentId: order.razorpayPaymentId ?? undefined,
+      razorpayOrderId: order.razorpayOrderId ?? undefined,
+      meta: { status, trackingNumber, adminId: req.user?.sub },
+    });
     logger.info('Order status updated', { orderId: order._id, status });
     res.json({ success: true, data: order });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getPaymentLogs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const {
+      page = '1',
+      limit = '20',
+      level,
+      scope,
+      orderId,
+      paymentId,
+      razorpayOrderId,
+      search,
+    } = req.query as Record<string, string>;
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    const filter: Record<string, unknown> = {};
+    if (level) filter.level = level.toUpperCase();
+    if (scope) filter.scope = scope.toUpperCase();
+    if (orderId) filter.order = orderId;
+    if (paymentId) filter.paymentId = paymentId;
+    if (razorpayOrderId) filter.razorpayOrderId = razorpayOrderId;
+    if (search) {
+      filter.$or = [
+        { event: { $regex: search, $options: 'i' } },
+        { message: { $regex: search, $options: 'i' } },
+        { paymentId: { $regex: search, $options: 'i' } },
+        { razorpayOrderId: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [logs, total] = await Promise.all([
+      PaymentAuditLogModel.find(filter)
+        .populate('order', '_id status paymentStatus total createdAt')
+        .populate('user', 'name email')
+        .sort('-createdAt')
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      PaymentAuditLogModel.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      data: logs,
+      pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) },
+    });
   } catch (error) {
     next(error);
   }

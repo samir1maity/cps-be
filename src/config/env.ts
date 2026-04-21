@@ -15,6 +15,9 @@ export interface EnvConfig {
   // Razorpay
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
+  RAZORPAY_WEBHOOK_SECRET: string;
+  PAYMENT_LOG_RETENTION_DAYS: number;
+  PAYMENT_LOG_MAX_PER_ORDER: number;
   // Storage (provider-agnostic)
   STORAGE_PROVIDER: string;   // 's3' | future: 'gcs' | 'azure'
   PRESIGN_EXPIRES_IN: number; // seconds — lifetime of signed upload/download URLs
@@ -50,6 +53,9 @@ export const config: EnvConfig = {
   // Razorpay
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
+  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+  PAYMENT_LOG_RETENTION_DAYS: Number(process.env.PAYMENT_LOG_RETENTION_DAYS || 30),
+  PAYMENT_LOG_MAX_PER_ORDER: Number(process.env.PAYMENT_LOG_MAX_PER_ORDER || 25),
   // Storage
   STORAGE_PROVIDER: process.env.STORAGE_PROVIDER || 's3',
   PRESIGN_EXPIRES_IN: Number(process.env.PRESIGN_EXPIRES_IN || 900), // 15 min default

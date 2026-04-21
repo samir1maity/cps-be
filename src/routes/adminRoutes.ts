@@ -9,6 +9,7 @@ import {
   createCoupon,
   getCoupons,
   updateCoupon,
+  getPaymentLogs,
 } from '../controllers/adminController.js';
 import {
   listCategories,
@@ -31,6 +32,7 @@ router.get('/stats', getDashboardStats);
 // Orders
 router.get('/orders', getAdminOrders);
 router.patch('/orders/:id/status', updateOrderStatus);
+router.get('/payment-logs', getPaymentLogs);
 
 // Users
 router.get('/users', getAdminUsers);

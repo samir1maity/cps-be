@@ -31,6 +31,7 @@ const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   message: { success: false, message: 'Too many requests, please try again later' },
+  skip: (req) => req.path === '/api/v1/orders/webhooks/razorpay',
 });
 
 app.use(cors({
@@ -45,6 +46,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(generalLimiter);
+app.use('/api/v1/orders/webhooks/razorpay', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());

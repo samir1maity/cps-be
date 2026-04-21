@@ -1,8 +1,17 @@
 import { Router } from 'express';
-import { createOrder, verifyPayment, getOrders, getOrder, cancelOrder } from '../controllers/orderController.js';
+import {
+  createOrder,
+  verifyPayment,
+  getOrders,
+  getOrder,
+  cancelOrder,
+  handleRazorpayWebhook,
+} from '../controllers/orderController.js';
 import { authenticate } from '../middlewares/authenticate.js';
 
 const router = Router();
+
+router.post('/webhooks/razorpay', handleRazorpayWebhook);
 
 router.use(authenticate);
 

@@ -35,7 +35,7 @@ const orderSchema = new mongoose.Schema(
     },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },
-    razorpaySignature: { type: String },
+    paymentFailureReason: { type: String },
     trackingNumber: { type: String },
     notes: { type: String },
     couponCode: { type: String },
@@ -45,7 +45,8 @@ const orderSchema = new mongoose.Schema(
 
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ status: 1 });
-orderSchema.index({ razorpayOrderId: 1 });
+orderSchema.index({ razorpayOrderId: 1 }, { unique: true, sparse: true });
+orderSchema.index({ razorpayPaymentId: 1 }, { unique: true, sparse: true });
 
 export type Order = InferSchemaType<typeof orderSchema>;
 

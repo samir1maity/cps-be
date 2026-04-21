@@ -8,6 +8,7 @@ import {
   sendRefundUpdateEmail,
 } from '../services/notificationService.js';
 import { initiateRefund } from '../services/razorpayService.js';
+import { recordAuditLog } from '../services/paymentAuditService.js';
 import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
 
@@ -116,16 +117,41 @@ export const processReturnRequest = async (req: AuthRequest, res: Response, next
           returnRequest.refundStatus = 'COMPLETED';
           returnRequest.status = 'REFUND_COMPLETED';
 
-          // Update order payment status
-          await OrderModel.findByIdAndUpdate(returnRequest.order, {
-            paymentStatus: 'REFUNDED',
-            status: 'REFUNDED',
-          });
+          if (returnRequest.refundAmount >= order.total) {
+            await OrderModel.findByIdAndUpdate(returnRequest.order, {
+              paymentStatus: 'REFUNDED',
+              status: 'REFUNDED',
+            });
+          }
 
+          await recordAuditLog({
+            scope: 'REFUND',
+            event: 'REFUND_COMPLETED',
+            message: 'Refund completed successfully',
+            orderId: returnRequest.order.toString(),
+            userId: returnRequest.user.toString(),
+            paymentId: order.razorpayPaymentId,
+            refundId: refund.id as string,
+            meta: {
+              refundAmount: returnRequest.refundAmount,
+              returnRequestId: returnRequest._id.toString(),
+              refundType: returnRequest.refundAmount >= order.total ? 'FULL' : 'PARTIAL',
+            },
+          });
           logger.info('Refund processed', { returnRequestId: returnRequest._id, refundId: refund.id });
         } catch (refundError) {
           returnRequest.refundStatus = 'FAILED';
           returnRequest.status = 'REFUND_FAILED';
+          await recordAuditLog({
+            scope: 'REFUND',
+            event: 'REFUND_FAILED',
+            level: 'ERROR',
+            message: 'Refund processing failed',
+            orderId: returnRequest.order.toString(),
+            userId: returnRequest.user.toString(),
+            paymentId: order.razorpayPaymentId,
+            meta: { refundAmount: returnRequest.refundAmount, returnRequestId: returnRequest._id.toString() },
+          });
           logger.error('Refund failed', { returnRequestId: returnRequest._id, error: refundError });
         }
       }
