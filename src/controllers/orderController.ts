@@ -819,7 +819,9 @@ export const getOrder = async (req: AuthRequest, res: Response, next: NextFuncti
       ? { _id: req.params.id }
       : { _id: req.params.id, user: req.user!.sub };
 
-    const order = await OrderModel.findOne(query).populate('shippingAddress');
+    const order = await OrderModel.findOne(query)
+      .populate('shippingAddress')
+      .populate('user', 'name email phone');
     if (!order) throw new AppError('Order not found', 404);
     res.json({ success: true, data: order });
   } catch (error) {
