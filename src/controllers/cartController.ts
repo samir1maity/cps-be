@@ -8,6 +8,7 @@ const getCartWithProducts = async (userId: string) => {
   const cart = await CartModel.findOne({ user: userId })
     .populate({
       path: 'items.product',
+      match: { isActive: true },
       select: 'name price originalPrice images inStock stockQuantity brand',
       populate: [
         { path: 'category', select: 'id name slug' },
@@ -17,18 +18,21 @@ const getCartWithProducts = async (userId: string) => {
   return cart;
 };
 
-export const getCart = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const cart = await getCartWithProducts(req.user!.sub);
-    const items = cart?.items.map((item: any) => ({
+const toCartItems = (cart: any, userId: string) =>
+  (cart?.items ?? [])
+    .filter((item: any) => item.product != null)
+    .map((item: any) => ({
       id: item._id,
       productId: item.product._id,
       product: item.product,
       quantity: item.quantity,
-      userId: req.user!.sub,
-    })) || [];
+      userId,
+    }));
 
-    res.json({ success: true, data: items });
+export const getCart = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const cart = await getCartWithProducts(req.user!.sub);
+    res.json({ success: true, data: toCartItems(cart, req.user!.sub) });
   } catch (error) {
     next(error);
   }
@@ -64,15 +68,7 @@ export const addToCart = async (req: AuthRequest, res: Response, next: NextFunct
     }
 
     const populated = await getCartWithProducts(req.user!.sub);
-    const items = populated?.items.map((item: any) => ({
-      id: item._id,
-      productId: item.product._id,
-      product: item.product,
-      quantity: item.quantity,
-      userId: req.user!.sub,
-    })) || [];
-
-    res.status(201).json({ success: true, data: items });
+    res.status(201).json({ success: true, data: toCartItems(populated, req.user!.sub) });
   } catch (error) {
     next(error);
   }
@@ -99,15 +95,7 @@ export const updateCartItem = async (req: AuthRequest, res: Response, next: Next
     await cart.save();
 
     const populated = await getCartWithProducts(req.user!.sub);
-    const items = populated?.items.map((i: any) => ({
-      id: i._id,
-      productId: i.product._id,
-      product: i.product,
-      quantity: i.quantity,
-      userId: req.user!.sub,
-    })) || [];
-
-    res.json({ success: true, data: items });
+    res.json({ success: true, data: toCartItems(populated, req.user!.sub) });
   } catch (error) {
     next(error);
   }
