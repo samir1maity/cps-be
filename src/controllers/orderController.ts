@@ -815,7 +815,11 @@ export const getOrders = async (req: AuthRequest, res: Response, next: NextFunct
 
 export const getOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const order = await OrderModel.findOne({ _id: req.params.id, user: req.user!.sub }).populate('shippingAddress');
+    const query = req.user!.role === 'admin'
+      ? { _id: req.params.id }
+      : { _id: req.params.id, user: req.user!.sub };
+
+    const order = await OrderModel.findOne(query).populate('shippingAddress');
     if (!order) throw new AppError('Order not found', 404);
     res.json({ success: true, data: order });
   } catch (error) {
