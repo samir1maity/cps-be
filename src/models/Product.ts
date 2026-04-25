@@ -23,6 +23,10 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+productSchema.pre('save', function () {
+  this.inStock = this.stockQuantity > 0;
+});
+
 productSchema.index({ category: 1 });
 productSchema.index({ subcategory: 1 });
 productSchema.index({ inStock: 1 });

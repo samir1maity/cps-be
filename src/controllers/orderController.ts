@@ -100,7 +100,10 @@ const reserveInventory = async (
         isActive: true,
         stockQuantity: { $gte: item.quantity },
       },
-      { $inc: { stockQuantity: -item.quantity } },
+      [
+        { $set: { stockQuantity: { $subtract: ['$stockQuantity', item.quantity] } } },
+        { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+      ],
       { session }
     );
 
@@ -117,7 +120,10 @@ const releaseInventory = async (
   for (const item of items) {
     await ProductModel.updateOne(
       { _id: item.product },
-      { $inc: { stockQuantity: item.quantity } },
+      [
+        { $set: { stockQuantity: { $add: ['$stockQuantity', item.quantity] } } },
+        { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+      ],
       { session }
     );
   }
