@@ -444,16 +444,23 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     const resolvedAddressId = await resolveShippingAddress(userId, addressId, shippingAddress, saveAddress);
-    const cart = await CartModel.findOne({ user: userId }).populate('items.product');
+    const cart = await CartModel.findOne({ user: userId }).populate({
+      path: 'items.product',
+      match: { isActive: true },
+    });
     if (!cart || cart.items.length === 0) throw new AppError('Cart is empty', 400);
+
+    const activeItems = (cart.items as any[]).filter((i) => i.product != null);
+    if (activeItems.length === 0) throw new AppError('All cart items are unavailable', 400);
 
     const orderItems: Array<{ product: unknown; name: string; image: string; quantity: number; price: number }> = [];
     let subtotal = 0;
 
-    for (const item of cart.items as any[]) {
-      const product = await ProductModel.findById(item.product._id);
-      if (!product || !product.isActive) throw new AppError(`Product ${item.product.name} is no longer available`, 400);
-      if (product.stockQuantity < item.quantity) throw new AppError(`Insufficient stock for ${product.name}`, 400);
+    for (const item of activeItems) {
+      const product = item.product;
+      if (product.stockQuantity < item.quantity) {
+        throw new AppError(`Insufficient stock for ${product.name}`, 400);
+      }
 
       orderItems.push({
         product: product._id,
