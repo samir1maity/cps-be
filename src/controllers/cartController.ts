@@ -9,7 +9,7 @@ const getCartWithProducts = async (userId: string) => {
     .populate({
       path: 'items.product',
       match: { isActive: true },
-      select: 'name price originalPrice images inStock stockQuantity brand',
+      select: 'name price originalPrice images colors inStock stockQuantity brand tags specifications',
       populate: [
         { path: 'category', select: 'id name slug' },
         { path: 'subcategory', select: 'id name slug' },
@@ -26,6 +26,7 @@ const toCartItems = (cart: any, userId: string) =>
       productId: item.product._id,
       product: item.product,
       quantity: item.quantity,
+      colorId: item.colorId ?? null,
       userId,
     }));
 
@@ -40,7 +41,7 @@ export const getCart = async (req: AuthRequest, res: Response, next: NextFunctio
 
 export const addToCart = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { productId, quantity = 1 } = req.body;
+    const { productId, quantity = 1, colorId = null } = req.body;
     if (!productId) throw new AppError('Product ID is required', 400);
 
     const product = await ProductModel.findOne({ _id: productId, isActive: true });
@@ -55,14 +56,19 @@ export const addToCart = async (req: AuthRequest, res: Response, next: NextFunct
     if (!cart) {
       cart = await CartModel.create({
         user: req.user!.sub,
-        items: [{ product: productId, quantity: qty }],
+        items: [{ product: productId, quantity: qty, colorId }],
       });
     } else {
-      const existingItem = cart.items.find((i: any) => i.product.toString() === productId);
+      // Match by both product and colorId so different colors are separate line items
+      const existingItem = cart.items.find(
+        (i: any) =>
+          i.product.toString() === productId &&
+          String(i.colorId ?? null) === String(colorId ?? null),
+      );
       if (existingItem) {
         existingItem.quantity = Math.min(existingItem.quantity + qty, product.stockQuantity);
       } else {
-        cart.items.push({ product: productId, quantity: qty } as any);
+        cart.items.push({ product: productId, quantity: qty, colorId } as any);
       }
       await cart.save();
     }

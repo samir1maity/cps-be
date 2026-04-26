@@ -99,6 +99,47 @@ export const presignUpload = async (
 };
 
 /**
+ * POST /api/v1/upload/sign-batch
+ * Body: { keys: string[] }  (max 50)
+ * Returns: { results: Record<key, url> }
+ * Resolves multiple storage keys to signed GET URLs in one round-trip.
+ */
+export const signDownloadBatch = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { keys } = req.body as { keys?: unknown };
+
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new AppError('keys must be a non-empty array', 400);
+    }
+    if (keys.length > 50) {
+      throw new AppError('Maximum 50 keys per batch', 400);
+    }
+
+    const invalid = keys.find(
+      (k) => typeof k !== 'string' || !k || k.length > MAX_KEY_LENGTH || k.includes('..') || k.startsWith('/'),
+    );
+    if (invalid !== undefined) {
+      throw new AppError('One or more keys are invalid', 400);
+    }
+
+    const entries = await Promise.all(
+      (keys as string[]).map(async (key) => {
+        const url = await storage.getSignedDownloadUrl(key);
+        return [key, url] as const;
+      }),
+    );
+
+    res.json({ success: true, data: { results: Object.fromEntries(entries) } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * GET /api/v1/upload/sign/:key(*)
  * Authenticated users only.
  * Returns a short-lived signed GET URL for a stored key.

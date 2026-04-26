@@ -3,7 +3,8 @@ import mongoose, { type InferSchemaType } from 'mongoose';
 const orderItemSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
   name: { type: String, required: true },
-  image: { type: String },
+  image: { type: String, default: '' },
+  colorName: { type: String, default: null },
   quantity: { type: Number, required: true, min: 1 },
   price: { type: Number, required: true, min: 0 },
 }, { _id: true });

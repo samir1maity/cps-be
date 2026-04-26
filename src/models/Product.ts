@@ -1,5 +1,10 @@
 import mongoose, { type InferSchemaType } from 'mongoose';
 
+const colorVariantSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  imageKey: { type: String, required: true },
+});
+
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -7,6 +12,7 @@ const productSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     originalPrice: { type: Number, min: 0 },
     images: [{ type: String }],
+    colors: { type: [colorVariantSchema], default: [] },
     category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
     subcategory: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null },
     brand: { type: String, trim: true, default: 'Creative Pottery Studio' },

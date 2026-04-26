@@ -18,7 +18,8 @@ const buildProductResponse = (p: any) => ({
   description: p.description,
   price: p.price,
   originalPrice: p.originalPrice,
-  images: p.images as string[], // stored keys — frontend resolves to signed URLs
+  images: p.images as string[],
+  colors: (p.colors ?? []).map((c: any) => ({ _id: c._id, name: c.name, imageKey: c.imageKey })),
   category: p.category,
   subcategory: p.subcategory,
   brand: p.brand,
@@ -142,13 +143,13 @@ export const createProduct = async (
       stockQuantity,
       tags,
       specifications,
-      imageKeys, // JSON array of storage keys sent by the frontend after direct S3 upload
+      imageKeys,
+      colors, // JSON array of { name, imageKey }
     } = req.body;
 
     const category = await CategoryModel.findById(categoryId);
     if (!category) throw new AppError('Category not found', 404);
 
-    // Parse imageKeys — frontend sends a JSON-encoded array of storage keys.
     let images: string[] = [];
     if (imageKeys) {
       try {
@@ -159,12 +160,23 @@ export const createProduct = async (
       }
     }
 
+    let colorVariants: Array<{ name: string; imageKey: string }> = [];
+    if (colors) {
+      try {
+        colorVariants = JSON.parse(colors);
+        if (!Array.isArray(colorVariants)) colorVariants = [];
+      } catch {
+        colorVariants = [];
+      }
+    }
+
     const product = await ProductModel.create({
       name,
       description,
       price: Number(price),
       originalPrice: originalPrice ? Number(originalPrice) : undefined,
-      images, // storage keys, never full URLs
+      images,
+      colors: colorVariants,
       category: categoryId,
       subcategory: subcategoryId || null,
       brand: brand || 'Creative Pottery Studio',
@@ -207,9 +219,10 @@ export const updateProduct = async (
       tags,
       specifications,
       isActive,
-      imageKeys,        // JSON array of NEW keys to append
-      removeImages,     // JSON array of keys to remove
-      orderedImageKeys, // JSON array — full ordered list (primary first), overrides append logic
+      imageKeys,
+      removeImages,
+      orderedImageKeys,
+      colors, // JSON array of { name, imageKey } — full replacement
     } = req.body;
 
     let imageKeyList: string[] = [...product.images];
@@ -249,6 +262,14 @@ export const updateProduct = async (
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
     if (req.body.isFeatured !== undefined)
       updates.isFeatured = req.body.isFeatured === 'true' || req.body.isFeatured === true;
+    if (colors !== undefined) {
+      try {
+        const parsed = JSON.parse(colors);
+        updates.colors = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        updates.colors = [];
+      }
+    }
 
     const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
       .populate('category', 'id name slug')

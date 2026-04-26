@@ -168,7 +168,7 @@ const createCodOrderTransaction = async (
   userId: string,
   resolvedAddressId: string,
   orderData: {
-    items: Array<{ product: unknown; name: string; image: string; quantity: number; price: number }>;
+    items: Array<{ product: unknown; name: string; image: string; colorName: string | null; quantity: number; price: number }>;
     subtotal: number;
     tax: number;
     shipping: number;
@@ -459,7 +459,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const activeItems = (cart.items as any[]).filter((i) => i.product != null);
     if (activeItems.length === 0) throw new AppError('All cart items are unavailable', 400);
 
-    const orderItems: Array<{ product: unknown; name: string; image: string; quantity: number; price: number }> = [];
+    const orderItems: Array<{ product: unknown; name: string; image: string; colorName: string | null; quantity: number; price: number }> = [];
     let subtotal = 0;
 
     for (const item of activeItems) {
@@ -468,10 +468,15 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
         throw new AppError(`Insufficient stock for ${product.name}`, 400);
       }
 
+      const matchedColor = item.colorId
+        ? product.colors?.find((c: any) => String(c._id) === String(item.colorId))
+        : undefined;
+
       orderItems.push({
         product: product._id,
         name: product.name,
-        image: product.images[0] || '',
+        image: matchedColor?.imageKey || product.images[0] || '',
+        colorName: matchedColor?.name ?? null,
         quantity: item.quantity,
         price: product.price,
       });
