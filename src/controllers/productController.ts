@@ -4,6 +4,10 @@ import CategoryModel from '../models/Category.js';
 import { AppError } from '../middlewares/errorHandler.js';
 import { storage } from '../storage/index.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
+import {
+  deleteVariantImagesForProduct,
+  deleteVariantImagesForColor,
+} from './colorVariantImagesController.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -262,10 +266,18 @@ export const updateProduct = async (
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
     if (req.body.isFeatured !== undefined)
       updates.isFeatured = req.body.isFeatured === 'true' || req.body.isFeatured === true;
+    let removedColorIds: string[] = [];
     if (colors !== undefined) {
       try {
         const parsed = JSON.parse(colors);
-        updates.colors = Array.isArray(parsed) ? parsed : [];
+        const incoming: Array<{ _id?: string }> = Array.isArray(parsed) ? parsed : [];
+        updates.colors = incoming;
+
+        // Find color IDs that existed before but are absent in the incoming list.
+        const incomingIds = new Set(incoming.map((c) => String(c._id)).filter(Boolean));
+        removedColorIds = (product.colors ?? [])
+          .map((c: any) => String(c._id))
+          .filter((id: string) => !incomingIds.has(id));
       } catch {
         updates.colors = [];
       }
@@ -274,6 +286,14 @@ export const updateProduct = async (
     const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
       .populate('category', 'id name slug')
       .populate('subcategory', 'id name slug');
+
+    // Clean up gallery docs for color variants that were removed.
+    if (removedColorIds.length > 0) {
+      const productId = req.params.id as string;
+      Promise.all(
+        removedColorIds.map((colorId) => deleteVariantImagesForColor(productId, colorId)),
+      ).catch((err) => console.error('[updateProduct] variant images cleanup error:', err));
+    }
 
     res.json({ success: true, data: buildProductResponse(updated!) });
   } catch (error) {
@@ -300,6 +320,11 @@ export const deleteProduct = async (
         (err) => console.error('[deleteProduct] S3 cleanup error:', err),
       );
     }
+
+    // Delete all color variant gallery images for this product.
+    deleteVariantImagesForProduct(String(product._id)).catch((err) =>
+      console.error('[deleteProduct] variant images cleanup error:', err),
+    );
 
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
