@@ -1,5 +1,6 @@
 import { type Request, type Response, type NextFunction } from 'express';
 import UserModel from '../models/User.js';
+import AdminModel from '../models/Admin.js';
 import OrderModel from '../models/Order.js';
 import ProductModel from '../models/Product.js';
 import CategoryModel from '../models/Category.js';
@@ -69,18 +70,38 @@ export const getAdminOrders = async (req: Request, res: Response, next: NextFunc
     const filter: Record<string, any> = {};
     if (status) filter.status = status;
 
-    const [orders, total] = await Promise.all([
-      OrderModel.find(filter)
-        .populate('user', 'name email phone')
-        .sort('-createdAt')
-        .skip((pageNum - 1) * limitNum)
-        .limit(limitNum),
+    // Fetch raw docs first (no populate) so we always have the user ObjectId,
+    // then resolve User and Admin in parallel.
+    const [rawOrders, total] = await Promise.all([
+      OrderModel.find(filter).lean().sort('-createdAt').skip((pageNum - 1) * limitNum).limit(limitNum),
       OrderModel.countDocuments(filter),
     ]);
 
+    const userIds = [...new Set(rawOrders.map((o) => String(o.user)))];
+
+    const [users, admins] = await Promise.all([
+      UserModel.find({ _id: { $in: userIds } }, 'name email phone').lean(),
+      AdminModel.find({ _id: { $in: userIds } }, 'name email').lean(),
+    ]);
+
+    const userMap = new Map(users.map((u) => [String(u._id), { id: String(u._id), name: u.name, email: u.email, phone: (u as any).phone }]));
+    const adminMap = new Map(admins.map((a) => [String(a._id), { id: String(a._id), name: a.name, email: a.email }]));
+
+    const enriched = rawOrders.map((order) => {
+      const uid = String(order.user);
+      const userDoc = userMap.get(uid);
+      const adminDoc = adminMap.get(uid);
+      return {
+        ...order,
+        id: String(order._id),
+        user: userDoc ?? adminDoc ?? null,
+        isAdminOrder: !userDoc && !!adminDoc,
+      };
+    });
+
     res.json({
       success: true,
-      data: orders,
+      data: enriched,
       pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) },
     });
   } catch (error) {
