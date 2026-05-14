@@ -89,43 +89,140 @@ const runInTransaction = async <T>(
   }
 };
 
+// Order items carry { product, colorId?, quantity }.
+// We aggregate by (productId, colorId) before touching the DB so that
+// multiple cart lines for the same variant are collapsed into one update.
+interface OrderItemLike {
+  product: unknown;
+  colorId?: { toString(): string } | string | null;
+  quantity: number;
+}
+
+interface AggregatedItem {
+  productId: string;
+  colorId: string | null;
+  quantity: number;
+}
+
+function aggregateItems(items: OrderItemLike[]): AggregatedItem[] {
+  const map = new Map<string, AggregatedItem>();
+  for (const item of items) {
+    const pid = item.product != null ? String(item.product) : '';
+    const cid = item.colorId != null ? item.colorId.toString() : null;
+    const key = `${pid}::${cid ?? ''}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.quantity += item.quantity;
+    } else {
+      map.set(key, { productId: pid, colorId: cid, quantity: item.quantity });
+    }
+  }
+  return [...map.values()];
+}
+
 const reserveInventory = async (
-  items: Array<{ product: unknown; quantity: number }>,
+  items: OrderItemLike[],
   session?: ClientSession
 ): Promise<void> => {
-  for (const item of items) {
-    const stockReservation = await ProductModel.updateOne(
-      {
-        _id: item.product,
-        isActive: true,
-        stockQuantity: { $gte: item.quantity },
-      },
-      [
-        { $set: { stockQuantity: { $subtract: ['$stockQuantity', item.quantity] } } },
-        { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
-      ],
-      { session }
-    );
+  const aggregated = aggregateItems(items);
 
-    if (stockReservation.modifiedCount !== 1) {
-      throw new AppError('One or more items are out of stock', 409);
+  for (const item of aggregated) {
+    let result;
+
+    if (item.colorId) {
+      // Atomically decrement the specific color variant's stock.
+      // The query filter ensures stock won't go negative.
+      result = await ProductModel.updateOne(
+        {
+          _id: item.productId,
+          isActive: true,
+          colors: {
+            $elemMatch: {
+              _id: item.colorId,
+              stock: { $gte: item.quantity },
+            },
+          },
+        },
+        { $inc: { 'colors.$.stock': -item.quantity } },
+        { session }
+      );
+
+      if (result.modifiedCount !== 1) {
+        throw new AppError('One or more items are out of stock', 409);
+      }
+
+      // Recompute the aggregated stockQuantity and inStock flag via pipeline update
+      await ProductModel.updateOne(
+        { _id: item.productId },
+        [
+          {
+            $set: {
+              stockQuantity: { $sum: '$colors.stock' },
+            },
+          },
+          {
+            $set: {
+              inStock: { $gt: ['$stockQuantity', 0] },
+            },
+          },
+        ],
+        { session }
+      );
+    } else {
+      // Plain product — decrement top-level stockQuantity atomically
+      result = await ProductModel.updateOne(
+        {
+          _id: item.productId,
+          isActive: true,
+          stockQuantity: { $gte: item.quantity },
+        },
+        [
+          { $set: { stockQuantity: { $subtract: ['$stockQuantity', item.quantity] } } },
+          { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+        ],
+        { session }
+      );
+
+      if (result.modifiedCount !== 1) {
+        throw new AppError('One or more items are out of stock', 409);
+      }
     }
   }
 };
 
 const releaseInventory = async (
-  items: Array<{ product: unknown; quantity: number }>,
+  items: OrderItemLike[],
   session?: ClientSession
 ): Promise<void> => {
-  for (const item of items) {
-    await ProductModel.updateOne(
-      { _id: item.product },
-      [
-        { $set: { stockQuantity: { $add: ['$stockQuantity', item.quantity] } } },
-        { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
-      ],
-      { session }
-    );
+  const aggregated = aggregateItems(items);
+
+  for (const item of aggregated) {
+    if (item.colorId) {
+      await ProductModel.updateOne(
+        { _id: item.productId, 'colors._id': item.colorId },
+        { $inc: { 'colors.$.stock': item.quantity } },
+        { session }
+      );
+
+      // Recompute aggregate fields
+      await ProductModel.updateOne(
+        { _id: item.productId },
+        [
+          { $set: { stockQuantity: { $sum: '$colors.stock' } } },
+          { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+        ],
+        { session }
+      );
+    } else {
+      await ProductModel.updateOne(
+        { _id: item.productId },
+        [
+          { $set: { stockQuantity: { $add: ['$stockQuantity', item.quantity] } } },
+          { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+        ],
+        { session }
+      );
+    }
   }
 };
 
@@ -168,7 +265,7 @@ const createCodOrderTransaction = async (
   userId: string,
   resolvedAddressId: string,
   orderData: {
-    items: Array<{ product: unknown; name: string; image: string; colorName: string | null; quantity: number; price: number }>;
+    items: Array<{ product: unknown; name: string; image: string; colorName: string | null; colorId: string | null; quantity: number; price: number }>;
     subtotal: number;
     tax: number;
     shipping: number;
@@ -459,24 +556,57 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const activeItems = (cart.items as any[]).filter((i) => i.product != null);
     if (activeItems.length === 0) throw new AppError('All cart items are unavailable', 400);
 
-    const orderItems: Array<{ product: unknown; name: string; image: string; colorName: string | null; quantity: number; price: number }> = [];
+    const orderItems: Array<{ product: unknown; name: string; image: string; colorName: string | null; colorId: string | null; quantity: number; price: number }> = [];
     let subtotal = 0;
+
+    // Aggregate cart quantities per (productId, colorId) to catch multi-line issues
+    // before touching inventory
+    const qtyMap = new Map<string, number>();
+    for (const item of activeItems) {
+      const pid = String(item.product._id);
+      const cid = item.colorId ? String(item.colorId) : null;
+      const key = `${pid}::${cid ?? ''}`;
+      qtyMap.set(key, (qtyMap.get(key) ?? 0) + item.quantity);
+    }
 
     for (const item of activeItems) {
       const product = item.product;
-      if (product.stockQuantity < item.quantity) {
-        throw new AppError(`Insufficient stock for ${product.name}`, 400);
-      }
-
       const matchedColor = item.colorId
         ? product.colors?.find((c: any) => String(c._id) === String(item.colorId))
         : undefined;
+
+      if (item.colorId) {
+        // Per-variant stock check
+        if (!matchedColor) {
+          throw new AppError(`Color variant not found for ${product.name}`, 400);
+        }
+        const pid = String(product._id);
+        const key = `${pid}::${String(item.colorId)}`;
+        const totalQty = qtyMap.get(key) ?? item.quantity;
+        if (matchedColor.stock < totalQty) {
+          throw new AppError(
+            `Insufficient stock for ${product.name} (${matchedColor.name}): only ${matchedColor.stock} available`,
+            400
+          );
+        }
+      } else {
+        // Plain product stock check
+        const key = `${String(product._id)}::`;
+        const totalQty = qtyMap.get(key) ?? item.quantity;
+        if (product.stockQuantity < totalQty) {
+          throw new AppError(
+            `Insufficient stock for ${product.name}: only ${product.stockQuantity} available`,
+            400
+          );
+        }
+      }
 
       orderItems.push({
         product: product._id,
         name: product.name,
         image: matchedColor?.imageKey || product.images[0] || '',
         colorName: matchedColor?.name ?? null,
+        colorId: item.colorId ?? null,
         quantity: item.quantity,
         price: product.price,
       });

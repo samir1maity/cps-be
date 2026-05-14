@@ -3,6 +3,7 @@ import mongoose, { type InferSchemaType } from 'mongoose';
 const colorVariantSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   imageKey: { type: String, required: true },
+  stock: { type: Number, required: true, min: 0, default: 0 },
 });
 
 const productSchema = new mongoose.Schema(
@@ -17,19 +18,26 @@ const productSchema = new mongoose.Schema(
     subcategory: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null },
     brand: { type: String, trim: true, default: 'Creative Pottery Studio' },
     inStock: { type: Boolean, default: true },
+    // For color-variant products this is derived (sum of variant stocks) via pre-save.
+    // For plain products it is set directly by the admin.
     stockQuantity: { type: Number, required: true, min: 0, default: 0 },
     tags: [{ type: String, trim: true }],
     specifications: { type: Map, of: String, default: {} },
     isActive: { type: Boolean, default: true },
     isFeatured: { type: Boolean, default: false },
-    // Aggregated from reviews
     rating: { type: Number, default: 0, min: 0, max: 5 },
     reviewCount: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );
 
+// Keep stockQuantity and inStock in sync.
+// For color-variant products: stockQuantity = sum of all variant stocks.
+// For plain products: stockQuantity is managed directly by the admin.
 productSchema.pre('save', function () {
+  if (this.colors && this.colors.length > 0) {
+    this.stockQuantity = this.colors.reduce((sum, c) => sum + (c.stock ?? 0), 0);
+  }
   this.inStock = this.stockQuantity > 0;
 });
 

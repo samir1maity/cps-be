@@ -5,6 +5,8 @@ const orderItemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   image: { type: String, default: '' },
   colorName: { type: String, default: null },
+  // Stored so releaseInventory can restore the correct variant's stock on cancel/refund
+  colorId: { type: mongoose.Schema.Types.ObjectId, default: null },
   quantity: { type: Number, required: true, min: 1 },
   price: { type: Number, required: true, min: 0 },
 }, { _id: true });

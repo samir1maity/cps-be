@@ -11,11 +11,6 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Build the API response shape for a product document.
- * Image keys stored in the DB are returned as-is.
- * The frontend calls GET /api/v1/upload/sign/:key to get a signed URL.
- */
 const buildProductResponse = (p: any) => ({
   id: p._id,
   name: p.name,
@@ -23,7 +18,13 @@ const buildProductResponse = (p: any) => ({
   price: p.price,
   originalPrice: p.originalPrice,
   images: p.images as string[],
-  colors: (p.colors ?? []).map((c: any) => ({ _id: c._id, name: c.name, imageKey: c.imageKey })),
+  // Expose stock per color so the frontend can show per-variant availability
+  colors: (p.colors ?? []).map((c: any) => ({
+    _id: c._id,
+    name: c.name,
+    imageKey: c.imageKey,
+    stock: c.stock ?? 0,
+  })),
   category: p.category,
   subcategory: p.subcategory,
   brand: p.brand,
@@ -148,7 +149,7 @@ export const createProduct = async (
       tags,
       specifications,
       imageKeys,
-      colors, // JSON array of { name, imageKey }
+      colors, // JSON array of { name, imageKey, stock }
     } = req.body;
 
     const category = await CategoryModel.findById(categoryId);
@@ -164,15 +165,26 @@ export const createProduct = async (
       }
     }
 
-    let colorVariants: Array<{ name: string; imageKey: string }> = [];
+    let colorVariants: Array<{ name: string; imageKey: string; stock: number }> = [];
     if (colors) {
       try {
-        colorVariants = JSON.parse(colors);
-        if (!Array.isArray(colorVariants)) colorVariants = [];
+        const parsed = JSON.parse(colors);
+        if (Array.isArray(parsed)) {
+          colorVariants = parsed.map((c: any) => ({
+            name: String(c.name ?? '').trim(),
+            imageKey: String(c.imageKey ?? ''),
+            stock: Math.max(0, parseInt(c.stock ?? '0', 10) || 0),
+          }));
+        }
       } catch {
         colorVariants = [];
       }
     }
+
+    const hasColors = colorVariants.length > 0;
+    // For plain products, use the provided stockQuantity.
+    // For color-variant products, stockQuantity is derived by the pre-save hook.
+    const plainStock = hasColors ? 0 : Math.max(0, Number(stockQuantity) || 0);
 
     const product = await ProductModel.create({
       name,
@@ -184,8 +196,8 @@ export const createProduct = async (
       category: categoryId,
       subcategory: subcategoryId || null,
       brand: brand || 'Creative Pottery Studio',
-      stockQuantity: Number(stockQuantity) || 0,
-      inStock: Number(stockQuantity) > 0,
+      stockQuantity: plainStock,
+      inStock: plainStock > 0,
       tags: tags ? JSON.parse(tags) : [],
       specifications: specifications ? JSON.parse(specifications) : {},
       isFeatured: req.body.isFeatured === 'true' || req.body.isFeatured === true,
@@ -226,25 +238,20 @@ export const updateProduct = async (
       imageKeys,
       removeImages,
       orderedImageKeys,
-      colors, // JSON array of { name, imageKey } — full replacement
+      colors, // JSON array of { _id?, name, imageKey, stock } — full replacement
     } = req.body;
 
     let imageKeyList: string[] = [...product.images];
 
-    // Remove explicitly deleted keys from storage and the list.
     if (removeImages) {
       const toRemove: string[] = JSON.parse(removeImages);
       await Promise.all(toRemove.map((k) => storage.delete(k)));
       imageKeyList = imageKeyList.filter((k) => !toRemove.includes(k));
     }
-
-    // Append newly uploaded keys.
     if (imageKeys) {
       const newKeys: string[] = JSON.parse(imageKeys);
       imageKeyList.push(...newKeys);
     }
-
-    // If frontend sent the full ordered list (primary first), use it directly.
     if (orderedImageKeys) {
       imageKeyList = JSON.parse(orderedImageKeys);
     }
@@ -257,39 +264,65 @@ export const updateProduct = async (
     if (categoryId) updates.category = categoryId;
     if (subcategoryId !== undefined) updates.subcategory = subcategoryId || null;
     if (brand) updates.brand = brand;
-    if (stockQuantity !== undefined) {
-      updates.stockQuantity = Number(stockQuantity);
-      updates.inStock = Number(stockQuantity) > 0;
-    }
     if (tags) updates.tags = JSON.parse(tags);
     if (specifications) updates.specifications = JSON.parse(specifications);
     if (isActive !== undefined) updates.isActive = isActive === 'true' || isActive === true;
     if (req.body.isFeatured !== undefined)
       updates.isFeatured = req.body.isFeatured === 'true' || req.body.isFeatured === true;
+
     let removedColorIds: string[] = [];
+
     if (colors !== undefined) {
       try {
         const parsed = JSON.parse(colors);
-        const incoming: Array<{ _id?: string }> = Array.isArray(parsed) ? parsed : [];
+        const incoming: Array<{ _id?: string; name: string; imageKey: string; stock: number }> =
+          Array.isArray(parsed)
+            ? parsed.map((c: any) => ({
+                _id: c._id,
+                name: String(c.name ?? '').trim(),
+                imageKey: String(c.imageKey ?? ''),
+                stock: Math.max(0, parseInt(c.stock ?? '0', 10) || 0),
+              }))
+            : [];
+
         updates.colors = incoming;
 
-        // Find color IDs that existed before but are absent in the incoming list.
+        // Collect removed color IDs for gallery cleanup
         const incomingIds = new Set(incoming.map((c) => String(c._id)).filter(Boolean));
         removedColorIds = (product.colors ?? [])
           .map((c: any) => String(c._id))
           .filter((id: string) => !incomingIds.has(id));
+
+        // For color-variant products the pre-save hook computes stockQuantity.
+        // For plain products (no colors after update) use the provided stockQuantity.
+        if (incoming.length === 0 && stockQuantity !== undefined) {
+          updates.stockQuantity = Math.max(0, Number(stockQuantity) || 0);
+          updates.inStock = updates.stockQuantity > 0;
+        }
       } catch {
         updates.colors = [];
+        if (stockQuantity !== undefined) {
+          updates.stockQuantity = Math.max(0, Number(stockQuantity) || 0);
+          updates.inStock = updates.stockQuantity > 0;
+        }
       }
+    } else if (stockQuantity !== undefined && (product.colors ?? []).length === 0) {
+      // Plain product with no color change — update stock directly
+      updates.stockQuantity = Math.max(0, Number(stockQuantity) || 0);
+      updates.inStock = updates.stockQuantity > 0;
     }
 
-    const updated = await ProductModel.findByIdAndUpdate(req.params.id, updates, { new: true })
+    // findByIdAndUpdate bypasses pre-save hooks, so we use save() to trigger them
+    Object.assign(product, updates);
+    await product.save();
+
+    const updated = await ProductModel.findById(req.params.id)
       .populate('category', 'id name slug')
       .populate('subcategory', 'id name slug');
 
-    // Clean up gallery docs for color variants that were removed.
+    // Clean up gallery docs for removed color variants (fire-and-forget)
     if (removedColorIds.length > 0) {
-      const productId = req.params.id as string;
+      const productId = String(req.params.id);
       Promise.all(
         removedColorIds.map((colorId) => deleteVariantImagesForColor(productId, colorId)),
       ).catch((err) => console.error('[updateProduct] variant images cleanup error:', err));
@@ -310,18 +343,16 @@ export const deleteProduct = async (
     const product = await ProductModel.findByIdAndUpdate(
       req.params.id,
       { isActive: false },
-      { new: false }, // return the doc before update to read its image keys
+      { new: false },
     );
     if (!product) throw new AppError('Product not found', 404);
 
-    // Delete all stored images from S3 (fire-and-forget — don't block the response).
     if (Array.isArray(product.images) && product.images.length > 0) {
       Promise.all(product.images.map((key: string) => storage.delete(key))).catch(
         (err) => console.error('[deleteProduct] S3 cleanup error:', err),
       );
     }
 
-    // Delete all color variant gallery images for this product.
     deleteVariantImagesForProduct(String(product._id)).catch((err) =>
       console.error('[deleteProduct] variant images cleanup error:', err),
     );
