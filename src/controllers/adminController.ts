@@ -2,6 +2,7 @@ import { type Request, type Response, type NextFunction } from 'express';
 import UserModel from '../models/User.js';
 import AdminModel from '../models/Admin.js';
 import OrderModel from '../models/Order.js';
+import { releaseInventory } from './orderController.js';
 import ProductModel from '../models/Product.js';
 import CategoryModel from '../models/Category.js';
 import ReturnRequestModel from '../models/ReturnRequest.js';
@@ -118,9 +119,43 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
     const order = await OrderModel.findById(req.params.id).populate('user', 'name email');
     if (!order) throw new AppError('Order not found', 404);
 
+    // Guard: cannot change status of a refunded order
+    if (order.status === 'REFUNDED') {
+      throw new AppError('Cannot update status of a refunded order', 400);
+    }
+
+    // Guard: no-op
+    if (order.status === status) {
+      res.json({ success: true, data: order });
+      return;
+    }
+
+    const prevStatus = order.status;
     order.status = status;
     if (trackingNumber) order.trackingNumber = trackingNumber;
+
+    // COD delivered → payment is collected in person, mark as PAID
+    if (status === 'DELIVERED' && order.paymentMethod === 'CASH_ON_DELIVERY' && order.paymentStatus === 'PENDING') {
+      order.paymentStatus = 'PAID';
+    }
+
+    // Admin cancellation: handle payment status and inventory
+    if (status === 'CANCELLED') {
+      // Mark Razorpay payment as FAILED if it was never captured
+      if (order.paymentMethod === 'RAZORPAY' && order.paymentStatus === 'PENDING') {
+        order.paymentStatus = 'FAILED';
+        order.paymentFailureReason = 'Cancelled by admin';
+      }
+    }
+
     await order.save();
+
+    // Release inventory when cancelling a confirmed/in-progress order
+    // (inventory is reserved at CONFIRMED for both COD and Razorpay)
+    const inventoryHeld = ['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
+    if (status === 'CANCELLED' && inventoryHeld.includes(prevStatus)) {
+      await releaseInventory(order.items);
+    }
 
     const user = order.user as any;
     if (status === 'SHIPPED' && trackingNumber && user?.email) {
@@ -135,6 +170,10 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       { orderId: order._id.toString() }
     );
 
+    const actingAdmin = req.user?.sub
+      ? await AdminModel.findById(req.user.sub, 'name').lean()
+      : null;
+
     await recordAuditLog({
       scope: 'ORDER',
       event: 'ORDER_STATUS_UPDATED',
@@ -143,9 +182,9 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       userId: user._id.toString(),
       paymentId: order.razorpayPaymentId ?? undefined,
       razorpayOrderId: order.razorpayOrderId ?? undefined,
-      meta: { status, trackingNumber, adminId: req.user?.sub },
+      meta: { status, trackingNumber, updatedBy: actingAdmin?.name ?? 'Admin' },
     });
-    logger.info('Order status updated', { orderId: order._id, status });
+    logger.info('Order status updated', { orderId: order._id, status, prevStatus });
     res.json({ success: true, data: order });
   } catch (error) {
     next(error);

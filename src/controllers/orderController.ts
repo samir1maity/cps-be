@@ -190,7 +190,7 @@ const reserveInventory = async (
   }
 };
 
-const releaseInventory = async (
+export const releaseInventory = async (
   items: OrderItemLike[],
   session?: ClientSession
 ): Promise<void> => {
