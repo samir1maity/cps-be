@@ -5,7 +5,7 @@ import { AppError } from '../middlewares/errorHandler.js';
 
 export const getCategories = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const categories = await CategoryModel.find({ isActive: true, parentId: null });
+    const categories = await CategoryModel.find({ isActive: true, parentId: null }).sort({ sortOrder: 1, name: 1 });
 
     // Fetch children for each top-level category
     const result = await Promise.all(

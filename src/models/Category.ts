@@ -8,11 +8,13 @@ const categorySchema = new mongoose.Schema(
     image: { type: String },
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null },
     isActive: { type: Boolean, default: true },
+    sortOrder: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
 
 categorySchema.index({ parentId: 1 });
+categorySchema.index({ sortOrder: 1 });
 
 export type Category = InferSchemaType<typeof categorySchema>;
 

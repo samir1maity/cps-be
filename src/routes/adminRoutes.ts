@@ -17,6 +17,7 @@ import {
   createCategory,
   updateCategory,
   deleteCategory,
+  reorderCategories,
   createCategoryRules,
   updateCategoryRules,
 } from '../controllers/adminCategoryController.js';
@@ -44,6 +45,7 @@ router.get('/returns', getAdminReturnRequests);
 // Categories & Subcategories — imageKey arrives as a plain JSON string in body,
 // uploaded directly from browser to S3 via pre-signed PUT URL.
 router.get('/categories', listCategories);
+router.patch('/categories/reorder', reorderCategories);
 router.get('/categories/:id', getCategory);
 router.post('/categories', createCategoryRules, createCategory);
 router.put('/categories/:id', updateCategoryRules, updateCategory);

@@ -26,7 +26,7 @@ import {
 import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
 
-const TAX_RATE = 0.18;
+const TAX_RATE = 0.05;
 const PAYMENT_METHODS = ['RAZORPAY'] as const;
 const WEBHOOK_EVENT_RETENTION_DAYS = 45;
 const WEBHOOK_PROCESSING_STALE_MS = 5 * 60 * 1000;

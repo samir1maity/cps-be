@@ -24,6 +24,7 @@ const formatCategory = (cat: any, children: any[] = [], productCount = 0) => ({
   image: cat.image ?? null, // storage key — never a full URL
   parentId: cat.parentId ?? null,
   isActive: cat.isActive,
+  sortOrder: cat.sortOrder ?? 0,
   productCount,
   children,
   createdAt: cat.createdAt,
@@ -108,7 +109,7 @@ export const listCategories = async (req: Request, res: Response, next: NextFunc
     const showInactive = req.query.includeInactive === 'true';
     const baseFilter = showInactive ? {} : { isActive: true };
 
-    const topLevel = await CategoryModel.find({ ...baseFilter, parentId: null }).sort('name');
+    const topLevel = await CategoryModel.find({ ...baseFilter, parentId: null }).sort({ sortOrder: 1, name: 1 });
 
     const result = await Promise.all(
       topLevel.map(async (cat) => {
@@ -237,6 +238,23 @@ export const updateCategory = async (req: Request, res: Response, next: NextFunc
     });
 
     res.json({ success: true, message: 'Category updated successfully', data: formatCategory(updated!) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const reorderCategories = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const items: { id: string; sortOrder: number }[] = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new AppError('Request body must be a non-empty array of {id, sortOrder}', 400);
+    }
+    await Promise.all(
+      items.map(({ id, sortOrder }) =>
+        CategoryModel.findByIdAndUpdate(id, { sortOrder }),
+      ),
+    );
+    res.json({ success: true, message: 'Category order saved' });
   } catch (error) {
     next(error);
   }
