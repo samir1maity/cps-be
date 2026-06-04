@@ -27,7 +27,7 @@ import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
 
 const TAX_RATE = 0.18;
-const PAYMENT_METHODS = ['RAZORPAY', 'CASH_ON_DELIVERY'] as const;
+const PAYMENT_METHODS = ['RAZORPAY'] as const;
 const WEBHOOK_EVENT_RETENTION_DAYS = 45;
 const WEBHOOK_PROCESSING_STALE_MS = 5 * 60 * 1000;
 
@@ -261,50 +261,6 @@ const dispatchPaymentSuccessEffects = async (order: {
   );
 };
 
-const createCodOrderTransaction = async (
-  userId: string,
-  resolvedAddressId: string,
-  orderData: {
-    items: Array<{ product: unknown; name: string; image: string; colorName: string | null; colorId: string | null; quantity: number; price: number }>;
-    subtotal: number;
-    tax: number;
-    shipping: number;
-    discount: number;
-    total: number;
-    couponCode?: string;
-  }
-): Promise<OrderDocument> =>
-  runInTransaction(async (session) => {
-    const [order] = await OrderModel.create([{
-      user: userId,
-      items: orderData.items,
-      status: 'CONFIRMED',
-      subtotal: orderData.subtotal,
-      tax: orderData.tax,
-      shipping: orderData.shipping,
-      discount: orderData.discount,
-      total: orderData.total,
-      shippingAddress: resolvedAddressId,
-      paymentMethod: 'CASH_ON_DELIVERY',
-      paymentStatus: 'PENDING',
-      couponCode: orderData.couponCode,
-    }], { session });
-
-    await reserveInventory(order.items, session);
-    await clearUserCart(userId, session);
-    await consumeCouponUsage(order.couponCode ?? undefined, session);
-    await recordAuditLog({
-      scope: 'ORDER',
-      event: 'ORDER_CREATED_COD',
-      message: 'COD order created',
-      orderId: order._id.toString(),
-      userId,
-      meta: { total: order.total, itemCount: order.items.length },
-      session,
-    });
-
-    return order;
-  });
 
 const finalizeCapturedPayment = async (
   orderId: string,
@@ -631,35 +587,6 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const tax = (subtotal - discount) * TAX_RATE;
     const shipping = 0;
     const total = subtotal - discount + tax + shipping;
-
-    if (normalizedPaymentMethod === 'CASH_ON_DELIVERY') {
-      const order = await createCodOrderTransaction(userId, resolvedAddressId, {
-        items: orderItems,
-        subtotal,
-        tax,
-        shipping,
-        discount,
-        total,
-        couponCode: appliedCoupon,
-      });
-
-      const user = await UserModel.findById(userId);
-      if (user) {
-        await sendOrderConfirmationEmail(user.email, user.name, order._id.toString(), total);
-        await createNotification(
-          userId,
-          'ORDER',
-          'Order Confirmed',
-          `Your order #${order._id} has been placed successfully.`,
-          { orderId: order._id.toString() }
-        );
-      }
-
-      logger.info('Order created (COD)', { orderId: order._id, userId });
-      const populated = await order.populate('shippingAddress');
-      res.status(201).json({ success: true, data: populated });
-      return;
-    }
 
     const order = await OrderModel.create({
       user: userId,

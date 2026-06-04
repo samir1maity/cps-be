@@ -134,11 +134,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
     order.status = status;
     if (trackingNumber) order.trackingNumber = trackingNumber;
 
-    // COD delivered → payment is collected in person, mark as PAID
-    if (status === 'DELIVERED' && order.paymentMethod === 'CASH_ON_DELIVERY' && order.paymentStatus === 'PENDING') {
-      order.paymentStatus = 'PAID';
-    }
-
     // Admin cancellation: handle payment status and inventory
     if (status === 'CANCELLED') {
       // Mark Razorpay payment as FAILED if it was never captured
@@ -151,7 +146,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
     await order.save();
 
     // Release inventory when cancelling a confirmed/in-progress order
-    // (inventory is reserved at CONFIRMED for both COD and Razorpay)
     const inventoryHeld = ['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
     if (status === 'CANCELLED' && inventoryHeld.includes(prevStatus)) {
       await releaseInventory(order.items);

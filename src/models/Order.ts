@@ -28,7 +28,7 @@ const orderSchema = new mongoose.Schema(
     shippingAddress: { type: mongoose.Schema.Types.ObjectId, ref: 'Address', required: true },
     paymentMethod: {
       type: String,
-      enum: ['RAZORPAY', 'CASH_ON_DELIVERY'],
+      enum: ['RAZORPAY'],
       required: true,
     },
     paymentStatus: {
