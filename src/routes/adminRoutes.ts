@@ -3,6 +3,7 @@ import {
   getDashboardStats,
   getAdminOrders,
   updateOrderStatus,
+  addOrderStatusUpdate,
   getAdminUsers,
   toggleUserBlock,
   getAdminReturnRequests,
@@ -33,6 +34,7 @@ router.get('/stats', getDashboardStats);
 // Orders
 router.get('/orders', getAdminOrders);
 router.patch('/orders/:id/status', updateOrderStatus);
+router.post('/orders/:id/status-updates', addOrderStatusUpdate);
 router.get('/payment-logs', getPaymentLogs);
 
 // Users

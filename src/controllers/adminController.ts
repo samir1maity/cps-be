@@ -112,7 +112,7 @@ export const getAdminOrders = async (req: Request, res: Response, next: NextFunc
 
 export const updateOrderStatus = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { status, trackingNumber } = req.body;
+    const { status, trackingNumber, statusMessage } = req.body;
     const validStatuses = ['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
     if (!validStatuses.includes(status)) throw new AppError('Invalid status', 400);
 
@@ -143,6 +143,18 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       }
     }
 
+    const defaultMessages: Record<string, string> = {
+      CONFIRMED: 'Your order has been confirmed.',
+      PROCESSING: 'Your order is being packed and prepared for shipment.',
+      SHIPPED: 'Your order has been shipped and is on the way.',
+      DELIVERED: 'Your order has been delivered successfully.',
+      CANCELLED: 'Your order has been cancelled.',
+    };
+    order.messages.push({
+      message: statusMessage?.trim() || defaultMessages[status] || `Order status updated to ${status}.`,
+      timestamp: new Date(),
+    } as any);
+
     await order.save();
 
     // Release inventory when cancelling a confirmed/in-progress order
@@ -160,7 +172,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       user._id.toString(),
       'ORDER',
       `Order ${status}`,
-      `Your order #${order._id} status updated to ${status}.`,
+      statusMessage?.trim() || `Your order #${order._id} status updated to ${status}.`,
       { orderId: order._id.toString() }
     );
 
@@ -179,6 +191,37 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
       meta: { status, trackingNumber, updatedBy: actingAdmin?.name ?? 'Admin' },
     });
     logger.info('Order status updated', { orderId: order._id, status, prevStatus });
+    res.json({ success: true, data: order });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const addOrderStatusUpdate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { message } = req.body;
+    if (!message?.trim()) throw new AppError('Message is required', 400);
+
+    const order = await OrderModel.findById(req.params.id).populate('user', 'name email');
+    if (!order) throw new AppError('Order not found', 404);
+
+    order.messages.push({
+      message: message.trim(),
+      timestamp: new Date(),
+    } as any);
+
+    await order.save();
+
+    const user = order.user as any;
+    await createNotification(
+      user._id.toString(),
+      'ORDER',
+      'Order Update',
+      message.trim(),
+      { orderId: order._id.toString() }
+    );
+
+    logger.info('Order status update added', { orderId: order._id, message });
     res.json({ success: true, data: order });
   } catch (error) {
     next(error);
