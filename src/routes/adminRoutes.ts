@@ -12,6 +12,7 @@ import {
   updateCoupon,
   getPaymentLogs,
 } from '../controllers/adminController.js';
+import { getQueries, updateQueryStatus } from '../controllers/queryController.js';
 import {
   listCategories,
   getCategory,
@@ -57,5 +58,9 @@ router.delete('/categories/:id', deleteCategory);
 router.get('/coupons', getCoupons);
 router.post('/coupons', createCoupon);
 router.put('/coupons/:id', updateCoupon);
+
+// Queries / Feedback
+router.get('/queries', getQueries);
+router.patch('/queries/:id/status', updateQueryStatus);
 
 export default router;
