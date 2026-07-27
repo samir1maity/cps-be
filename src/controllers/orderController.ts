@@ -501,6 +501,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       saveAddress = false,
       paymentMethod = 'RAZORPAY',
       couponCode,
+      gstNumber,
     } = req.body;
 
     const userId = req.user!.sub;
@@ -596,6 +597,12 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const shipping = 0;
     const total = subtotal - discount + tax + shipping;
 
+    const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+    const sanitizedGstNumber = gstNumber ? String(gstNumber).trim().toUpperCase() : null;
+    if (sanitizedGstNumber && !GST_REGEX.test(sanitizedGstNumber)) {
+      throw new AppError('Invalid GST number format', 400);
+    }
+
     const order = await OrderModel.create({
       user: userId,
       items: orderItems,
@@ -609,6 +616,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       paymentMethod: 'RAZORPAY',
       paymentStatus: 'PENDING',
       couponCode: appliedCoupon,
+      gstNumber: sanitizedGstNumber,
     });
 
     const amountInPaise = toPaise(total);

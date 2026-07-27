@@ -42,6 +42,7 @@ const orderSchema = new mongoose.Schema(
     trackingNumber: { type: String },
     notes: { type: String },
     couponCode: { type: String },
+    gstNumber: { type: String, default: null },
     messages: {
       type: [{ message: { type: String, required: true }, timestamp: { type: Date, default: Date.now } }],
       default: [],
