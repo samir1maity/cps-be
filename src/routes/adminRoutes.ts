@@ -14,6 +14,12 @@ import {
 } from '../controllers/adminController.js';
 import { getQueries, updateQueryStatus } from '../controllers/queryController.js';
 import {
+  getAdminNotifications,
+  getAdminUnreadCount,
+  markAdminNotificationRead,
+  markAllAdminNotificationsRead,
+} from '../controllers/adminNotificationController.js';
+import {
   listCategories,
   getCategory,
   createCategory,
@@ -62,5 +68,11 @@ router.put('/coupons/:id', updateCoupon);
 // Queries / Feedback
 router.get('/queries', getQueries);
 router.patch('/queries/:id/status', updateQueryStatus);
+
+// Admin notifications
+router.get('/notifications', getAdminNotifications);
+router.get('/notifications/unread-count', getAdminUnreadCount);
+router.patch('/notifications/read-all', markAllAdminNotificationsRead);
+router.patch('/notifications/:id/read', markAdminNotificationRead);
 
 export default router;

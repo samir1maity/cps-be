@@ -25,6 +25,7 @@ import {
 } from '../services/notificationService.js';
 import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
+import AdminNotificationModel from '../models/AdminNotification.js';
 
 const TAX_RATE = 0.05;
 const PAYMENT_METHODS = ['RAZORPAY'] as const;
@@ -259,6 +260,13 @@ const dispatchPaymentSuccessEffects = async (order: {
     `Payment for order #${order.id} was successful.`,
     { orderId: order.id }
   );
+
+  await AdminNotificationModel.create({
+    type: 'NEW_ORDER',
+    title: 'New Order Received',
+    message: `${user.name} placed order #${order.id} worth ₹${new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(order.total)}`,
+    data: { orderId: order.id, userId: order.userId, total: order.total },
+  });
 };
 
 
@@ -925,6 +933,12 @@ export const cancelOrder = async (req: AuthRequest, res: Response, next: NextFun
       `Your order #${order._id} has been cancelled.`,
       { orderId: order._id.toString() }
     );
+    await AdminNotificationModel.create({
+      type: 'ORDER_CANCELLED',
+      title: 'Order Cancelled by Customer',
+      message: `Order #${order._id} was cancelled by the customer.`,
+      data: { orderId: order._id.toString() },
+    });
     await recordAuditLog({
       scope: 'ORDER',
       event: 'ORDER_CANCELLED',
