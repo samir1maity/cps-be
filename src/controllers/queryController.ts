@@ -4,16 +4,16 @@ import { AppError } from '../middlewares/errorHandler.js';
 
 export const submitQuery = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { name, email, type, subject, message } = req.body;
+    const { name, email, phone, type, subject, message } = req.body;
 
-    if (!name || !email || !type || !subject || !message) {
+    if (!name || !email || !phone || !type || !subject || !message) {
       throw new AppError('All fields are required', 400);
     }
     if (!['review', 'query'].includes(type)) {
       throw new AppError('Invalid type', 400);
     }
 
-    const query = await QueryModel.create({ name, email, type, subject, message });
+    const query = await QueryModel.create({ name, email, phone, type, subject, message });
     res.status(201).json({ success: true, data: query });
   } catch (err) {
     next(err);

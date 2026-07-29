@@ -80,10 +80,20 @@ const findResettableAccountByEmail = async (email: string): Promise<ResettableAc
 
 export const signup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { name, email, password, role }: SignupBody = req.body || {};
+    const { name, email, password, role, phone, gstNumber }: SignupBody & { phone?: string; gstNumber?: string } = req.body || {};
 
     if (!name || !email || !password) {
       throw new AppError('Name, email, and password are required', 400);
+    }
+
+    if (!phone || !phone.trim()) {
+      throw new AppError('Phone number is required', 400);
+    }
+
+    const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+    const sanitizedGst = gstNumber ? gstNumber.trim().toUpperCase() : null;
+    if (sanitizedGst && !GST_REGEX.test(sanitizedGst)) {
+      throw new AppError('Invalid GST number format', 400);
     }
 
     const normalizedEmail = normalizeEmail(email);
@@ -102,7 +112,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
 
     const doc = targetRole === 'admin'
       ? await AdminModel.create({ name, email: normalizedEmail, passwordHash })
-      : await UserModel.create({ name, email: normalizedEmail, passwordHash });
+      : await UserModel.create({ name, email: normalizedEmail, passwordHash, phone: phone.trim(), gstNumber: sanitizedGst });
 
     const accessToken = signToken({ sub: doc.id, role: targetRole });
     const refreshToken = signRefreshToken({ sub: doc.id, role: targetRole });
