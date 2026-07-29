@@ -14,6 +14,13 @@ import {
 } from '../controllers/adminController.js';
 import { getQueries, updateQueryStatus } from '../controllers/queryController.js';
 import {
+  getAllSlides,
+  createSlide,
+  updateSlide,
+  deleteSlide,
+  reorderSlides,
+} from '../controllers/carouselController.js';
+import {
   getAdminNotifications,
   getAdminUnreadCount,
   markAdminNotificationRead,
@@ -68,6 +75,13 @@ router.put('/coupons/:id', updateCoupon);
 // Queries / Feedback
 router.get('/queries', getQueries);
 router.patch('/queries/:id/status', updateQueryStatus);
+
+// Carousel slides
+router.get('/carousel', getAllSlides);
+router.post('/carousel', createSlide);
+router.patch('/carousel/reorder', reorderSlides);
+router.put('/carousel/:id', updateSlide);
+router.delete('/carousel/:id', deleteSlide);
 
 // Admin notifications
 router.get('/notifications', getAdminNotifications);

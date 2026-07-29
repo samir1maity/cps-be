@@ -293,6 +293,24 @@ export const updateProduct = async (
           .map((c: any) => String(c._id))
           .filter((id: string) => !incomingIds.has(id));
 
+        // Delete S3 keys for color thumbnails that were replaced or removed.
+        const incomingKeyByColorId = new Map(incoming.map((c) => [String(c._id), c.imageKey]));
+        const staleColorKeys: string[] = (product.colors ?? [])
+          .filter((c: any) => {
+            const oldKey = String(c.imageKey ?? '');
+            if (!oldKey) return false;
+            // Removed entirely
+            if (!incomingIds.has(String(c._id))) return true;
+            // Key changed
+            return incomingKeyByColorId.get(String(c._id)) !== oldKey;
+          })
+          .map((c: any) => String(c.imageKey));
+        if (staleColorKeys.length > 0) {
+          Promise.all(staleColorKeys.map((k) => storage.delete(k))).catch((err) =>
+            console.error('[updateProduct] color thumbnail S3 cleanup error:', err),
+          );
+        }
+
         // For color-variant products the pre-save hook computes stockQuantity.
         // For plain products (no colors after update) use the provided stockQuantity.
         if (incoming.length === 0 && stockQuantity !== undefined) {

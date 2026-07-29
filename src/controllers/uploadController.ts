@@ -26,11 +26,12 @@ const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 // Maximum key length guard (prevents path-traversal and excessively long keys).
 const MAX_KEY_LENGTH = 512;
 
-// Maximum allowed file size for any upload (bytes).
-const MAX_FILE_SIZE = 250 * 1024; // 250 KB
+// Maximum allowed file size (bytes). Carousel banners are larger than product thumbnails.
+const MAX_FILE_SIZE = 250 * 1024;          // 250 KB default
+const MAX_FILE_SIZE_CAROUSEL = 5 * 1024 * 1024; // 5 MB for carousel banners
 
 // Folder allowlist — callers cannot write to arbitrary prefixes.
-const ALLOWED_FOLDERS = new Set(['products', 'categories', 'avatars']);
+const ALLOWED_FOLDERS = new Set(['products', 'categories', 'avatars', 'carousel']);
 
 /**
  * POST /api/v1/upload/presign
@@ -56,16 +57,17 @@ export const presignUpload = async (
       throw new AppError('folder, filename, mimeType, and fileSize are required', 400);
     }
 
-    if (fileSize > MAX_FILE_SIZE) {
-      throw new AppError(`File size must not exceed ${MAX_FILE_SIZE / 1024} KB`, 400);
+    const sizeLimit = folder === 'carousel' ? MAX_FILE_SIZE_CAROUSEL : MAX_FILE_SIZE;
+    if (fileSize > sizeLimit) {
+      throw new AppError(`File size must not exceed ${sizeLimit / 1024} KB`, 400);
     }
 
     if (!ALLOWED_FOLDERS.has(folder)) {
       throw new AppError(`folder must be one of: ${[...ALLOWED_FOLDERS].join(', ')}`, 400);
     }
 
-    // Only admins may upload product and category images.
-    if ((folder === 'products' || folder === 'categories') && req.user!.role !== 'admin') {
+    // Only admins may upload to restricted folders.
+    if (['products', 'categories', 'carousel'].includes(folder) && req.user!.role !== 'admin') {
       throw new AppError('Forbidden', 403);
     }
 

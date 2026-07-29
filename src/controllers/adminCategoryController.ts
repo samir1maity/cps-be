@@ -280,12 +280,34 @@ export const deleteCategory = async (req: Request, res: Response, next: NextFunc
     }
 
     if (hardDelete) {
+      // Collect all image keys (parent + children) before deleting docs.
+      const children = await CategoryModel.find({ parentId: cat._id }).select('image');
+      const keysToDelete = [cat.image, ...children.map((c) => c.image)].filter(Boolean) as string[];
+
       await CategoryModel.deleteMany({ parentId: cat._id });
       await CategoryModel.findByIdAndDelete(cat._id);
+
+      if (keysToDelete.length > 0) {
+        Promise.all(keysToDelete.map((k) => storage.delete(k))).catch((err) =>
+          console.error('[deleteCategory] S3 cleanup error:', err),
+        );
+      }
+
       res.json({ success: true, message: 'Category permanently deleted' });
     } else {
-      await CategoryModel.updateMany({ parentId: cat._id }, { isActive: false });
-      await CategoryModel.findByIdAndUpdate(cat._id, { isActive: false });
+      // Soft delete — remove images from S3 since the category is no longer visible.
+      const children = await CategoryModel.find({ parentId: cat._id }).select('image');
+      const keysToDelete = [cat.image, ...children.map((c) => c.image)].filter(Boolean) as string[];
+
+      await CategoryModel.updateMany({ parentId: cat._id }, { isActive: false, image: null });
+      await CategoryModel.findByIdAndUpdate(cat._id, { isActive: false, image: null });
+
+      if (keysToDelete.length > 0) {
+        Promise.all(keysToDelete.map((k) => storage.delete(k))).catch((err) =>
+          console.error('[deleteCategory] S3 cleanup error:', err),
+        );
+      }
+
       res.json({ success: true, message: 'Category deactivated successfully' });
     }
   } catch (error) {
