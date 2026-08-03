@@ -6,7 +6,6 @@ const querySchema = new mongoose.Schema(
     email: { type: String, required: true, trim: true, lowercase: true },
     phone: { type: String, required: true, trim: true },
     type: { type: String, enum: ['review', 'query'], required: true },
-    subject: { type: String, required: true, trim: true },
     message: { type: String, required: true, trim: true },
     status: { type: String, enum: ['unread', 'read', 'resolved'], default: 'unread' },
     adminNote: { type: String, trim: true },
