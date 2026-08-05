@@ -22,6 +22,7 @@ import { recordAuditLog } from '../services/paymentAuditService.js';
 import {
   createNotification,
   sendOrderConfirmationEmail,
+  sendNewOrderAdminEmail,
 } from '../services/notificationService.js';
 import UserModel from '../models/User.js';
 import logger from '../utils/logger.js';
@@ -247,12 +248,34 @@ const dispatchPaymentSuccessEffects = async (order: {
   userId: string;
   total: number;
 }): Promise<void> => {
-  const user = await UserModel.findById(order.userId);
-  if (!user) {
-    return;
-  }
+  const [user, fullOrder] = await Promise.all([
+    UserModel.findById(order.userId).select('name email phone'),
+    OrderModel.findById(order.id)
+      .populate<{ items: Array<{ product: { name: string; price: number }; quantity: number; price: number }> }>(
+        'items.product', 'name price'
+      )
+      .populate<{ shippingAddress: { fullName: string; addressLine1: string; city: string; state: string; pincode: string } }>(
+        'shippingAddress', 'fullName addressLine1 city state pincode'
+      ),
+  ]);
 
-  await sendOrderConfirmationEmail(user.email, user.name, order.id, order.total);
+  if (!user) return;
+
+  const addr = fullOrder?.shippingAddress;
+  const addressStr = addr
+    ? `${(addr as any).fullName ?? `${(addr as any).firstName ?? ''} ${(addr as any).lastName ?? ''}`.trim()}, ${(addr as any).addressLine1 ?? (addr as any).address1 ?? ''}, ${(addr as any).city ?? ''}, ${(addr as any).state ?? ''} - ${(addr as any).pincode ?? (addr as any).zipCode ?? ''}`
+    : undefined;
+
+  const orderItems = (fullOrder?.items ?? []).map((it) => ({
+    name: it.product?.name ?? 'Product',
+    quantity: it.quantity,
+    price: it.price ?? it.product?.price ?? 0,
+  }));
+
+  // 1. Customer confirmation email — full itemised receipt
+  await sendOrderConfirmationEmail(user.email, user.name, order.id, order.total, orderItems, addressStr);
+
+  // 2. In-app notification for the customer
   await createNotification(
     user._id.toString(),
     'PAYMENT',
@@ -261,11 +284,23 @@ const dispatchPaymentSuccessEffects = async (order: {
     { orderId: order.id }
   );
 
+  // 3. Admin panel notification (bell icon)
   await AdminNotificationModel.create({
     type: 'NEW_ORDER',
     title: 'New Order Received',
     message: `${user.name} placed order #${order.id} worth ₹${new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(order.total)}`,
     data: { orderId: order.id, userId: order.userId, total: order.total },
+  });
+
+  // 4. Admin email notification — new order alert to STORE_ADMIN_EMAIL
+  await sendNewOrderAdminEmail({
+    orderId: order.id,
+    customerName: user.name,
+    customerEmail: user.email,
+    customerPhone: (user as any).phone,
+    total: order.total,
+    items: orderItems,
+    address: addressStr,
   });
 };
 

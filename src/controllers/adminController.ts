@@ -13,7 +13,7 @@ import { AppError } from '../middlewares/errorHandler.js';
 import type { AuthRequest } from '../middlewares/authenticate.js';
 import {
   createNotification,
-  sendShippingUpdateEmail,
+  sendOrderStatusEmail,
 } from '../services/notificationService.js';
 import { recordAuditLog } from '../services/paymentAuditService.js';
 import logger from '../utils/logger.js';
@@ -164,8 +164,18 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response, next: N
     }
 
     const user = order.user as any;
-    if (status === 'SHIPPED' && trackingNumber && user?.email) {
-      await sendShippingUpdateEmail(user.email, user.name, order._id.toString(), trackingNumber);
+
+    // Send a status-specific email for every transition (fire-and-forget — never blocks the response)
+    if (user?.email) {
+      sendOrderStatusEmail({
+        email: user.email,
+        name: user.name,
+        orderId: order._id.toString(),
+        status: status as 'CONFIRMED' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
+        trackingNumber: trackingNumber || undefined,
+        customMessage: statusMessage?.trim() || undefined,
+        total: order.total,
+      }).catch((err) => logger.error('Failed to send order status email', { err, orderId: order._id, status }));
     }
 
     await createNotification(

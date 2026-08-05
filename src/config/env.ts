@@ -31,6 +31,10 @@ export interface EnvConfig {
   EMAIL_PORT: number;
   EMAIL_USER: string;
   EMAIL_PASS: string;
+  // Store identity — used in email from/reply headers and admin notifications
+  STORE_NAME: string;        // e.g. "Creative Pottery Studio"
+  STORE_EMAIL: string;       // inbox that receives new-order notifications (can differ from EMAIL_USER)
+  STORE_ADMIN_EMAIL: string; // admin notification recipient (can be same as STORE_EMAIL)
 }
 
 const required = ['MONGO_URI', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
@@ -69,4 +73,8 @@ export const config: EnvConfig = {
   EMAIL_PORT: Number(process.env.EMAIL_PORT || 587),
   EMAIL_USER: process.env.EMAIL_USER || '',
   EMAIL_PASS: process.env.EMAIL_PASS || '',
+  // Store identity
+  STORE_NAME: process.env.STORE_NAME || 'Creative Pottery Studio',
+  STORE_EMAIL: process.env.STORE_EMAIL || process.env.EMAIL_USER || '',
+  STORE_ADMIN_EMAIL: process.env.STORE_ADMIN_EMAIL || process.env.STORE_EMAIL || process.env.EMAIL_USER || '',
 };
