@@ -12,7 +12,7 @@ import {
   updateCoupon,
   getPaymentLogs,
 } from '../controllers/adminController.js';
-import { getQueries, updateQueryStatus } from '../controllers/queryController.js';
+import { getQueries, updateQueryStatus, toggleFeaturedReview } from '../controllers/queryController.js';
 import {
   getAllSlides,
   createSlide,
@@ -75,6 +75,7 @@ router.put('/coupons/:id', updateCoupon);
 // Queries / Feedback
 router.get('/queries', getQueries);
 router.patch('/queries/:id/status', updateQueryStatus);
+router.patch('/queries/:id/feature', toggleFeaturedReview);
 
 // Carousel slides
 router.get('/carousel', getAllSlides);

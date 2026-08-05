@@ -7,8 +7,11 @@ const querySchema = new mongoose.Schema(
     phone: { type: String, required: true, trim: true },
     type: { type: String, enum: ['review', 'query'], required: true },
     message: { type: String, required: true, trim: true },
-    status: { type: String, enum: ['unread', 'read', 'resolved'], default: 'unread' },
+    // Queries use: unread → read → resolved
+    // Reviews use: pending → approved | rejected
+    status: { type: String, enum: ['unread', 'read', 'resolved', 'pending', 'approved', 'rejected'], default: 'unread' },
     adminNote: { type: String, trim: true },
+    featuredOnHome: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
